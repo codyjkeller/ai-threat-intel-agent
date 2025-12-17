@@ -1,0 +1,69 @@
+{
+  "version": "2.0",
+  "last_updated": "2024-12-17",
+  "sources": [
+    {
+      "category": "GOVERNMENT_OFFICIAL",
+      "name": "CISA Known Exploited Vulnerabilities (KEV)",
+      "url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+      "priority": "CRITICAL",
+      "parser_type": "json_kev"
+    },
+    {
+      "category": "GOVERNMENT_OFFICIAL",
+      "name": "NIST NVD High Severity Feed",
+      "url": "https://nvd.nist.gov/feeds/xml/cve/misc/nvd-rss-analyst.xml",
+      "priority": "HIGH",
+      "parser_type": "xml_rss"
+    },
+    {
+      "category": "CLOUD_INFRASTRUCTURE",
+      "name": "AWS Security Bulletins",
+      "url": "https://aws.amazon.com/security/security-bulletins/feed/",
+      "priority": "HIGH",
+      "parser_type": "xml_rss"
+    },
+    {
+      "category": "CLOUD_INFRASTRUCTURE",
+      "name": "Microsoft Security Response Center (MSRC)",
+      "url": "https://api.msrc.microsoft.com/update-guide/rss",
+      "priority": "HIGH",
+      "parser_type": "xml_rss"
+    },
+    {
+      "category": "THREAT_RESEARCH",
+      "name": "Google Project Zero",
+      "url": "https://googleprojectzero.blogspot.com/feeds/posts/default",
+      "priority": "MEDIUM",
+      "parser_type": "xml_atom"
+    },
+    {
+      "category": "THREAT_RESEARCH",
+      "name": "Mandiant Threat Intelligence",
+      "url": "https://www.mandiant.com/resources/blog/rss.xml",
+      "priority": "MEDIUM",
+      "parser_type": "xml_rss"
+    },
+    {
+      "category": "DEVSEC_OPS",
+      "name": "GitHub Advisory Database (Python)",
+      "url": "https://github.com/advisories?query=ecosystem%3Apip",
+      "priority": "MEDIUM",
+      "parser_type": "html_scraper"
+    },
+    {
+      "category": "OSINT_NEWS",
+      "name": "BleepingComputer",
+      "url": "https://www.bleepingcomputer.com/feed/",
+      "priority": "LOW",
+      "parser_type": "xml_rss"
+    },
+    {
+      "category": "OSINT_NEWS",
+      "name": "SANS Internet Storm Center",
+      "url": "https://isc.sans.edu/rssfeed.xml",
+      "priority": "LOW",
+      "parser_type": "xml_rss"
+    }
+  ]
+}
