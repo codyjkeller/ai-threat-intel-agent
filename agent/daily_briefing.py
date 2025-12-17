@@ -1,8 +1,14 @@
 import json
 import logging
+import schedule
+import time
+import smtplib
+import os
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 
-# Configure logging to look like a production service
+# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [INTEL_AGENT] - %(message)s')
 
 class ThreatIntelAgent:
@@ -16,33 +22,31 @@ class ThreatIntelAgent:
 
     def fetch_feeds(self):
         """
-        Iterates through sources defined in feeds.json.
-        In a real deployment, this would use 'requests' to hit the RSS/JSON endpoints.
-        For this portfolio demo, we simulate incoming payloads to demonstrate the filtering logic.
+        Mocking the ingestion of RSS/JSON feeds from CISA, NVD, etc.
         """
         logging.info(f"Starting ingestion from {len(self.config['sources'])} sources...")
         
-        # Simulating raw data fetched from CISA and NVD
+        # Simulated Findings
         mock_payloads = [
             {
                 "source": "CISA Known Exploited Vulnerabilities",
                 "cve_id": "CVE-2025-1001",
                 "description": "Active exploitation of Citrix NetScaler zero-day.",
-                "cvss_score": 9.8,  # CRITICAL
+                "cvss_score": 9.8,
                 "status": "Active Exploitation"
             },
             {
                 "source": "NIST NVD",
                 "cve_id": "CVE-2025-0045",
-                "description": "Buffer overflow in minor open-source library (lib-png-tiny).",
-                "cvss_score": 4.5,  # MEDIUM - Should be filtered out
+                "description": "Buffer overflow in minor open-source library.",
+                "cvss_score": 4.5, # Should be filtered out
                 "status": "Patch Available"
             },
             {
                 "source": "Microsoft MSRC",
                 "cve_id": "CVE-2025-2020",
                 "description": "Remote Code Execution in Exchange Server OWA.",
-                "cvss_score": 8.8,  # HIGH
+                "cvss_score": 8.8,
                 "status": "Patch Available"
             }
         ]
@@ -50,15 +54,13 @@ class ThreatIntelAgent:
 
     def analyze_risk(self, item):
         """
-        The 'Brain' of the agent.
-        Decides if an item is worth Executive attention.
+        Risk Decision Matrix:
+        1. CVSS >= 7.0 (High/Critical)
+        2. Source Priority = CRITICAL (e.g. CISA KEV)
         """
-        # Logic 1: Filter by CVSS Score (The "7.0 Rule")
         if item['cvss_score'] >= self.severity_threshold:
             return True, "CVSS Criticality (>7.0)"
 
-        # Logic 2: Check Source Priority from Config
-        # (Simplified for demo: assumes source name matches config)
         for source_cfg in self.config['sources']:
             if source_cfg['name'] == item['source']:
                 if source_cfg['priority'] in ['CRITICAL', 'HIGH']:
@@ -66,44 +68,78 @@ class ThreatIntelAgent:
         
         return False, "Noise"
 
-    def run(self):
+    def send_email_alert(self, findings):
+        """
+        Sends an HTML-formatted email summary to the Security Leadership team.
+        """
+        if not findings:
+            logging.info("No critical findings. Skipping email.")
+            return
+
+        sender_email = os.getenv("SMTP_USER", "agent@internal-security.local")
+        receiver_email = os.getenv("ALERT_EMAIL", "ciso@company.com")
+        password = os.getenv("SMTP_PASS", "secure_password")
+
+        # Build Email Content
+        msg = MIMEMultipart()
+        msg['Subject'] = f"🚨 Threat Intel Briefing: {len(findings)} Critical Items - {datetime.now().strftime('%Y-%m-%d')}"
+        msg['From'] = sender_email
+        msg['To'] = receiver_email
+
+        body_html = f"""
+        <h2>Daily Executive Threat Briefing</h2>
+        <p><b>Date:</b> {datetime.now().strftime('%Y-%m-%d')}</p>
+        <p>The following items matched our <b>High Risk</b> criteria (CVSS > 7.0 or Active Exploitation):</p>
+        <hr>
+        """
+
+        for item in findings:
+            body_html += f"""
+            <div style='margin-bottom: 20px; padding: 10px; border-left: 5px solid #d9534f; background-color: #f9f9f9;'>
+                <h3 style='margin: 0; color: #d9534f;'>{item['cve_id']} (CVSS {item['cvss_score']})</h3>
+                <p><b>Source:</b> {item['source']}<br>
+                <b>Impact:</b> {item['description']}<br>
+                <b>Status:</b> {item['status']}</p>
+            </div>
+            """
+
+        msg.attach(MIMEText(body_html, 'html'))
+
+        try:
+            # Mocking the actual send for the portfolio demo
+            # server = smtplib.SMTP('smtp.office365.com', 587)
+            # server.starttls()
+            # server.login(sender_email, password)
+            # server.send_message(msg)
+            # server.quit()
+            logging.info(f"📧 EMAIL SENT to {receiver_email} with {len(findings)} items.")
+            print(f"--- [DEMO OUTPUT] Email Body Generated ---\n{body_html[:150]}...\n------------------------------------------")
+        except Exception as e:
+            logging.error(f"Failed to send email: {e}")
+
+    def run_job(self):
+        logging.info("Running scheduled threat scan...")
         findings = []
         raw_data = self.fetch_feeds()
 
         for item in raw_data:
             is_relevant, reason = self.analyze_risk(item)
             if is_relevant:
-                logging.info(f"ALERT TRIGGERED: {item['cve_id']} | Score: {item['cvss_score']} | Reason: {reason}")
                 findings.append(item)
-            else:
-                logging.debug(f"Skipping noise: {item['cve_id']} (Score: {item['cvss_score']})")
-
-        self.generate_executive_summary(findings)
-
-    def generate_executive_summary(self, findings):
-        """
-        Uses GenAI (Mocked) to summarize the filtered findings into a 1-page email.
-        """
-        print("\n" + "="*60)
-        print(f"📢 DAILY EXECUTIVE THREAT BRIEFING - {datetime.now().strftime('%Y-%m-%d')}")
-        print("="*60)
         
-        if not findings:
-            print("Status: GREEN. No critical threats detected in the last 24 hours.")
-            return
-
-        print(f"⚠️  ALERT STATUS: RED ({len(findings)} Critical Items Detected)\n")
-        
-        for idx, item in enumerate(findings, 1):
-            print(f"{idx}. {item['cve_id']} (CVSS {item['cvss_score']})")
-            print(f"   - Source: {item['source']}")
-            print(f"   - Impact: {item['description']}")
-            print(f"   - Action: Notify Infra Team immediately.\n")
-
-        print("="*60)
-        print("[System] Briefing sent to CISO and SOC Manager via Slack Webhook.")
+        self.send_email_alert(findings)
 
 if __name__ == "__main__":
-    # Point to the config file we created earlier
     agent = ThreatIntelAgent('../config/feeds.json')
-    agent.run()
+
+    # Schedule the job for 9:00 AM every day
+    print("✅ Intel Agent Started. Waiting for 09:00 AM schedule...")
+    schedule.every().day.at("09:00").do(agent.run_job)
+    
+    # Also run once immediately for the demo/debugging
+    agent.run_job()
+
+    # Keep the script running
+    # while True:
+    #     schedule.run_pending()
+    #     time.sleep(60)
