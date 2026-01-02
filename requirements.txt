@@ -1,4 +1,7 @@
-requests
-rich
+langchain
+langchain-openai
 openai
+feedparser
 python-dotenv
+rich
+pandas
