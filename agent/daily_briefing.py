@@ -4,6 +4,7 @@ import schedule
 import time
 import smtplib
 import os
+import argparse
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
@@ -17,6 +18,12 @@ class ThreatIntelAgent:
         self.severity_threshold = 7.0  # CVSS Score Threshold
 
     def _load_config(self, path):
+        if not os.path.exists(path):
+            # Fallback if running from root directory
+            path = path.replace("../", "")
+            if not os.path.exists(path):
+                raise FileNotFoundError(f"Config file not found at: {path}")
+        
         with open(path, 'r') as f:
             return json.load(f)
 
@@ -26,7 +33,7 @@ class ThreatIntelAgent:
         """
         logging.info(f"Starting ingestion from {len(self.config['sources'])} sources...")
         
-        # Simulated Findings
+        # Simulated Findings (In a real app, this calls your RSS/NVD functions)
         mock_payloads = [
             {
                 "source": "CISA Known Exploited Vulnerabilities",
@@ -78,7 +85,6 @@ class ThreatIntelAgent:
 
         sender_email = os.getenv("SMTP_USER", "agent@internal-security.local")
         receiver_email = os.getenv("ALERT_EMAIL", "ciso@company.com")
-        password = os.getenv("SMTP_PASS", "secure_password")
 
         # Build Email Content
         msg = MIMEMultipart()
@@ -107,39 +113,6 @@ class ThreatIntelAgent:
 
         try:
             # Mocking the actual send for the portfolio demo
-            # server = smtplib.SMTP('smtp.office365.com', 587)
-            # server.starttls()
-            # server.login(sender_email, password)
-            # server.send_message(msg)
-            # server.quit()
             logging.info(f"📧 EMAIL SENT to {receiver_email} with {len(findings)} items.")
             print(f"--- [DEMO OUTPUT] Email Body Generated ---\n{body_html[:150]}...\n------------------------------------------")
-        except Exception as e:
-            logging.error(f"Failed to send email: {e}")
-
-    def run_job(self):
-        logging.info("Running scheduled threat scan...")
-        findings = []
-        raw_data = self.fetch_feeds()
-
-        for item in raw_data:
-            is_relevant, reason = self.analyze_risk(item)
-            if is_relevant:
-                findings.append(item)
-        
-        self.send_email_alert(findings)
-
-if __name__ == "__main__":
-    agent = ThreatIntelAgent('../config/feeds.json')
-
-    # Schedule the job for 9:00 AM every day
-    print("✅ Intel Agent Started. Waiting for 09:00 AM schedule...")
-    schedule.every().day.at("09:00").do(agent.run_job)
-    
-    # Also run once immediately for the demo/debugging
-    agent.run_job()
-
-    # Keep the script running
-    # while True:
-    #     schedule.run_pending()
-    #     time.sleep(60)
+        except Exception as
