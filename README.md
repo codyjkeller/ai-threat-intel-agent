@@ -1,38 +1,103 @@
-# 🛡️ AI Threat Intel Agent
+```markdown
+# 🛡️ AI Threat Intel & Vulnerability Monitor
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
-![OpenAI](https://img.shields.io/badge/AI-GPT--4-green)
+![NVD](https://img.shields.io/badge/Data-NIST_NVD-blueviolet)
+![Slack](https://img.shields.io/badge/Integration-Slack_Alerts-4A154B)
 ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
-**An automated Threat Intelligence agent that monitors global security feeds, filters noise, and prioritizes risks specific to your tech stack.**
+**An automated Vulnerability Management engine that monitors official government databases (NVD), filters for *your* specific tech stack, and alerts your team in real-time.**
 
-Instead of doom-scrolling Twitter or RSS feeds for hours, this agent:
-1.  **Ingests** real-time data from CISA, The Hacker News, and BleepingComputer.
-2.  **Analyzes** every article using GPT-4 to assign a "Risk Score" (1-10).
-3.  **Filters** for relevance based on your defined "Watchlist" (e.g., Kubernetes, AWS, Zero-Day).
-4.  **Reports** actionable intelligence in a clean dashboard and CSV export.
+Most threat intel tools are just "news aggregators." This agent is a **filter**. It connects directly to the NIST National Vulnerability Database (NVD) API to determine if a new CVE actually affects your specific infrastructure (e.g., "Kubernetes", "AWS", "React") before waking you up.
 
-## 🚀 Key Features
+## ✨ Key Features
 
-* **Custom Watchlist:** Define your tech stack (e.g., "Azure", "Python") and the AI will flag relevant CVEs/breaches.
-* **Auto-Scoring:** AI assigns a numerical Risk Score to every threat, filtering out "marketing fluff" news.
-* **Executive Summaries:** Rewrites complex technical articles into 1-sentence impact statements.
-* **Zero-Config Data:** Uses public RSS feeds—no expensive API keys (VirusTotal/AlienVault) required.
+* **🇺🇸 NVD Direct Integration:** Queries the NIST National Vulnerability Database API every 24 hours for authoritative CVE data.
+* **🎯 Tech Stack Filtering:** Ignores noise by filtering threats against your defined assets.
+* **🚨 Real-Time Slack Alerts:** Pushes "Critical" and "High" severity vulnerabilities directly to your security channel with a formatted report.
+* **🧠 Context-Aware:** Eliminates "alert fatigue" by only flagging CVEs that match your `WATCHLIST`.
 
-## 🛠️ Usage
+## 🛠️ Architecture
 
-### 1. Setup
+```mermaid
+graph LR
+    A[NIST NVD API] -->|Raw CVEs| D{Relevance Engine}
+    
+    D -->|Filter by Tech Stack| E[Risk Scorer]
+    
+    E -->|Score > 8| F[Slack Alert 🚨]
+    E -->|Low Priority| G[Log to Console 📝]
+
+```
+
+## 🚀 Usage
+
+### 1. Installation
+
 ```bash
 git clone [https://github.com/codyjkeller/ai-threat-intel-agent.git](https://github.com/codyjkeller/ai-threat-intel-agent.git)
 cd ai-threat-intel-agent
 pip install -r requirements.txt
 
-2. Configure Credentials
-Copy the example environment file:
-cp .env.example .env
+```
 
-3. Run the Agent
+### 2. Configuration
+
+Create a `.env` file in the root directory to configure your Slack webhook (optional):
+
+```bash
+# Required for Real-Time Alerts
+SLACK_WEBHOOK_URL=[https://hooks.slack.com/services/T000](https://hooks.slack.com/services/T000)...
+
+```
+
+### 3. Define Your Stack
+
+Open `src/main.py` and update the `WATCHLIST` to match your infrastructure:
+
+```python
+# The agent will only alert on these technologies
+WATCHLIST = ["Kubernetes", "AWS", "Python", "React", "PostgreSQL"]
+
+```
+
+### 4. Run the Monitor
+
+```bash
 python src/main.py
 
-📜 License
+```
+
+## 📊 Sample Output
+
+### CLI Console
+
+```text
+🛡️  Starting AI Threat & Vulnerability Monitor...
+📡 Querying NVD for CVEs (Last 24h)...
+✅ Found 45 new CVEs.
+🚨 Detected 1 Critical Vulnerabilities matching stack!
+   - CVE-2024-1234 (KUBERNETES): Attackers can bypass authentication...
+✅ Slack alert sent for CVE-2024-1234
+
+```
+
+### Slack Alert
+
+The agent sends formatted cards to Slack for immediate visibility:
+
+> **🚨 Critical Alert: CVE-2024-1234**
+> * **Tech:** KUBERNETES
+> * **Severity:** High / Critical
+> * **Description:** Attackers can bypass authentication in the kubelet API...
+> * [ View Official Report ]
+> 
+> 
+
+## 📜 License
+
 MIT
+
+```
+
+```
