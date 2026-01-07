@@ -2,7 +2,6 @@ import json
 import logging
 import schedule
 import time
-import smtplib
 import os
 import argparse
 from email.mime.text import MIMEText
@@ -18,11 +17,22 @@ class ThreatIntelAgent:
         self.severity_threshold = 7.0  # CVSS Score Threshold
 
     def _load_config(self, path):
+        # Handle path resolution for different running contexts
         if not os.path.exists(path):
-            # Fallback if running from root directory
-            path = path.replace("../", "")
-            if not os.path.exists(path):
-                raise FileNotFoundError(f"Config file not found at: {path}")
+            # Try looking one directory up if running from src/
+            alt_path = path.replace("config/", "../config/") if "config/" in path else "../" + path
+            if os.path.exists(alt_path):
+                path = alt_path
+            else:
+                 # Fallback: Create default config in memory if file is missing (For Demo robustness)
+                logging.warning(f"Config file not found at {path}. Using default config.")
+                return {
+                    "sources": [
+                        {"name": "CISA Known Exploited Vulnerabilities", "priority": "CRITICAL"},
+                        {"name": "NIST NVD", "priority": "HIGH"},
+                        {"name": "Microsoft MSRC", "priority": "MEDIUM"}
+                    ]
+                }
         
         with open(path, 'r') as f:
             return json.load(f)
@@ -33,7 +43,7 @@ class ThreatIntelAgent:
         """
         logging.info(f"Starting ingestion from {len(self.config['sources'])} sources...")
         
-        # Simulated Findings (In a real app, this calls your RSS/NVD functions)
+        # Simulated Findings
         mock_payloads = [
             {
                 "source": "CISA Known Exploited Vulnerabilities",
@@ -75,6 +85,23 @@ class ThreatIntelAgent:
         
         return False, "Noise"
 
+    def run_cycle(self):
+        """Main execution logic for a single scan cycle."""
+        logging.info("--- Starting Threat Scan Cycle ---")
+        items = self.fetch_feeds()
+        critical_findings = []
+
+        for item in items:
+            is_critical, reason = self.analyze_risk(item)
+            if is_critical:
+                logging.info(f"MATCH: {item['cve_id']} flagged due to {reason}")
+                critical_findings.append(item)
+            else:
+                logging.debug(f"DROP: {item['cve_id']} below threshold.")
+
+        self.send_email_alert(critical_findings)
+        logging.info("--- Cycle Complete ---")
+
     def send_email_alert(self, findings):
         """
         Sends an HTML-formatted email summary to the Security Leadership team.
@@ -114,5 +141,27 @@ class ThreatIntelAgent:
         try:
             # Mocking the actual send for the portfolio demo
             logging.info(f"📧 EMAIL SENT to {receiver_email} with {len(findings)} items.")
-            print(f"--- [DEMO OUTPUT] Email Body Generated ---\n{body_html[:150]}...\n------------------------------------------")
-        except Exception as
+            # print(f"\n--- [DEMO OUTPUT] Email Body Generated ---\n{body_html}\n------------------------------------------")
+        except Exception as e:
+            logging.error(f"Failed to send email: {e}")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="AI Threat Intel Agent")
+    parser.add_argument("--config", default="config/settings.json", help="Path to config file")
+    parser.add_argument("--run-once", action="store_true", help="Run a single scan and exit (for CI/CD)")
+    args = parser.parse_args()
+
+    agent = ThreatIntelAgent(args.config)
+
+    if args.run_once:
+        agent.run_cycle()
+    else:
+        logging.info("Starting Scheduler (Runs daily at 08:00)...")
+        schedule.every().day.at("08:00").do(agent.run_cycle)
+        
+        # Also run immediately on startup for demo purposes
+        agent.run_cycle() 
+        
+        while True:
+            schedule.run_pending()
+            time.sleep(1)
