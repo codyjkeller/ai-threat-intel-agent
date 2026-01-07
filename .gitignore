@@ -1,14 +1,15 @@
 # Python
 __pycache__/
-*.pyc
-
-# Environment Variables (Protect your API Keys!)
+*.py[cod]
+*$py.class
+venv/
 .env
 
-# Virtual Environment
-venv/
-env/
+# Data artifacts (Optional: Keep this if you want to commit the mock feed, 
+# but usually we ignore generated data)
+# data/threat_feed.json 
 
-# IDE settings
+# IDE
 .vscode/
 .idea/
+.DS_Store
