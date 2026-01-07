@@ -7,3 +7,4 @@ rich
 pandas
 requests
 schedule
+colorama
