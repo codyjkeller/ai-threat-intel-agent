@@ -28,8 +28,8 @@ graph LR
     
     D --> E{Risk Decision Matrix}
     
-    E -->|CVSS < 7.0| F[🗑️ Drop (Noise)]
-    E -->|CVSS > 7.0| G[🚨 Priority Queue]
+    E -->|CVSS < 7.0| F["🗑️ Drop (Noise)"]
+    E -->|CVSS > 7.0| G["🚨 Priority Queue"]
     E -->|Source = CISA| G
     
     G --> H[Generate HTML Briefing]
