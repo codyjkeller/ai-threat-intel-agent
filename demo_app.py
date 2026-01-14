@@ -94,18 +94,15 @@ def save_json(filepath, data):
 def repair_alert_data(alerts):
     repaired = False
     for a in alerts:
-        # Fix missing CVSS
         if not a.get('cvss') or a.get('cvss') == 'N/A' or a.get('cvss') == 0.0:
             if "CRIT" in a['severity']: a['cvss'] = 9.8
             elif "HIGH" in a['severity']: a['cvss'] = 7.5
             elif "MED" in a['severity']: a['cvss'] = 5.4
             else: a['cvss'] = 3.0
             repaired = True
-        # Fix broken links
         if not a.get('url') or a.get('url') == '#':
             a['url'] = f"https://nvd.nist.gov/vuln/detail/{a['cve']}"
             repaired = True
-            
     if repaired: save_json(ALERTS_FILE, alerts)
     return alerts
 
@@ -134,40 +131,84 @@ def calculate_risk_score(alerts):
         else: score += 5
     return score
 
+# --- NOTIFICATIONS ---
+
+def send_real_alert(webhook, channel, bot_name, alert):
+    """Sends a rich formatted alert to Slack for new threats."""
+    if not webhook: return
+    
+    # Severity Color
+    color = "#DC2626" if "CRIT" in alert['severity'] else "#EA580C" if "HIGH" in alert['severity'] else "#CA8A04"
+    
+    payload = {
+        "username": bot_name,
+        "channel": channel,
+        "attachments": [
+            {
+                "color": color,
+                "title": f"🚨 {alert['severity']}: {alert['affected_asset'].upper()} Vulnerability",
+                "title_link": alert.get('url'),
+                "text": alert['description'][:200] + "...",
+                "fields": [
+                    {"title": "CVE", "value": alert['cve'], "short": True},
+                    {"title": "CVSS Score", "value": str(alert.get('cvss', 'N/A')), "short": True},
+                    {"title": "Source", "value": alert['source'], "short": True}
+                ],
+                "footer": "Guardian AI Threat Intel",
+                "ts": time.time()
+            }
+        ]
+    }
+    try: requests.post(webhook, json=payload)
+    except: pass
+
 def run_scan():
     inv = st.session_state.get("temp_inventory", load_json(INVENTORY_FILE, {"assets": []}))
     assets = inv.get("assets", [])
+    webhook = inv.get("slack_webhook")
+    channel = inv.get("slack_channel", "#security-alerts")
+    bot_name = inv.get("slack_bot_name", "Guardian AI")
+    min_alert_level = inv.get("slack_min_severity", "High+")
+    
     alerts = load_json(ALERTS_FILE, [])
     new_finds = 0
     
-    def update_or_add(cve, asset, desc, sev, cvss, source, url, date):
+    # Priority Map
+    sev_map = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
+    min_map = {"Critical Only": 4, "High+": 3, "Medium+": 2, "All": 1}
+    threshold = min_map.get(min_alert_level, 3)
+
+    def process_finding(cve, asset, desc, sev, cvss, source, url, date):
         nonlocal new_finds
-        # Ensure URL is never empty
         if not url: url = f"https://nvd.nist.gov/vuln/detail/{cve}"
         
-        existing = next((a for a in alerts if a['cve'] == cve), None)
-        if existing:
-            if source not in existing['source']:
-                existing['source'] += f", {source}"
-        else:
-            alerts.append({
+        # Check duplication
+        if not any(a['cve'] == cve for a in alerts):
+            new_alert = {
                 "cve": cve, "affected_asset": asset, "description": desc,
                 "severity": sev, "cvss": cvss, "source": source,
                 "url": url, "date": date
-            })
+            }
+            alerts.append(new_alert)
             new_finds += 1
+            
+            # Fire Slack Webhook if meets threshold
+            if sev_map.get(sev, 1) >= threshold:
+                send_real_alert(webhook, channel, bot_name, new_alert)
 
+    # 1. CISA SCAN
     try:
         r = requests.get(CISA_KEV_URL).json()
         for vul in r.get("vulnerabilities", []):
             match = check_match(vul['product'], assets)
             if match:
-                update_or_add(
+                process_finding(
                     vul['cveID'], match, vul['shortDescription'], "CRITICAL", 9.8,
                     "CISA KEV", f"https://nvd.nist.gov/vuln/detail/{vul['cveID']}", vul['dateAdded']
                 )
     except: pass
 
+    # 2. NIST SCAN
     try:
         feed = feedparser.parse(NIST_RSS_URL)
         for entry in feed.entries:
@@ -178,7 +219,7 @@ def run_scan():
                 elif "LOW" in entry.title.upper(): sev = "LOW"
                 score = extract_cvss(entry.title, sev)
                 cve = entry.title.split()[0]
-                update_or_add(cve, match, entry.summary[:200]+"...", sev, score, "NIST NVD", entry.link, datetime.now().strftime("%Y-%m-%d"))
+                process_finding(cve, match, entry.summary[:200]+"...", sev, score, "NIST NVD", entry.link, datetime.now().strftime("%Y-%m-%d"))
     except: pass
 
     save_json(ALERTS_FILE, alerts)
@@ -190,7 +231,7 @@ def send_slack_test(webhook, channel, bot_name):
         payload = {
             "username": bot_name,
             "channel": channel,
-            "text": "✅ **Guardian AI:** Connection Test Successful.\nSystem is ready to report threats."
+            "text": "✅ **Guardian AI:** Connection Test Successful."
         }
         requests.post(webhook, json=payload)
         return True
@@ -213,11 +254,8 @@ else:
         st.title("Guardian AI")
         page = st.radio("Navigation", ["Dashboard", "Asset Inventory", "Settings"], label_visibility="collapsed")
         st.divider()
-        
-        # AUTO REFRESH LOGIC
         st.markdown("### ⏱️ Live Mode")
-        refresh_opt = st.selectbox("Auto-Refresh", ["Off", "5 Minutes", "15 Minutes", "1 Hour", "24 Hours"])
-        
+        refresh_opt = st.selectbox("Auto-Refresh", ["Off", "5 Minutes", "15 Minutes", "1 Hour"], label_visibility="collapsed")
         st.divider()
         st.caption(f"User: **Admin**")
         if st.button("Log Out"): st.session_state.authenticated = False; st.rerun()
@@ -228,7 +266,6 @@ else:
     triage_history = load_json(TRIAGE_FILE, [])
     active_alerts = [a for a in alerts if a['cve'] not in [t['cve'] for t in triage_history]]
 
-    # --- DASHBOARD ---
     if page == "Dashboard":
         c1, c2 = st.columns([3, 1])
         with c1: st.title("Risk Dashboard")
@@ -251,9 +288,8 @@ else:
         with st.expander("🔎 Filter Intelligence", expanded=True):
             f1, f2, f3 = st.columns(3)
             with f1: 
-                st.caption("Severity Levels")
-                st.markdown("<span class='badge crit'>CRITICAL</span> <span class='badge high'>HIGH</span> <span class='badge med'>MEDIUM</span>", unsafe_allow_html=True)
-                sev_filter = st.multiselect("Select Severity", ["CRITICAL", "HIGH", "MEDIUM", "LOW"], default=["CRITICAL", "HIGH"], label_visibility="collapsed")
+                # CLEANED UP: Just the dropdown now
+                sev_filter = st.multiselect("Severity", ["CRITICAL", "HIGH", "MEDIUM", "LOW"], default=["CRITICAL", "HIGH"])
             with f2: sort_by = st.selectbox("Sort By", ["Risk (CVSS)", "Newest First", "Asset Name"])
             with f3: min_cvss = st.slider("Min CVSS", 0.0, 10.0, 0.0)
 
@@ -279,7 +315,6 @@ else:
                         st.markdown(f"<span class='badge {s_cls}'>{row['severity']}</span> <span class='badge {s_cls}'>CVSS {cvss_val}</span>", unsafe_allow_html=True)
                         st.write(row['description'])
                         st.caption(f"**Sources:** {row['source']} • **Detected:** {row['date']}")
-                        # ROBUST LINK: Uses row['url'] which is now guaranteed by repair_alert_data
                         st.markdown(f"[🔗 Read Full Intelligence Report]({row.get('url')})", unsafe_allow_html=True)
                     
                     with c_act:
@@ -291,12 +326,7 @@ else:
                             if st.form_submit_button("Confirm Triage"):
                                 if decision != "Select...":
                                     rec = row.copy()
-                                    rec.update({
-                                        "decision": decision, 
-                                        "notes": reason, 
-                                        "triaged_at": str(datetime.now()),
-                                        "triaged_by": "Admin" 
-                                    })
+                                    rec.update({"decision": decision, "notes": reason, "triaged_at": str(datetime.now()), "triaged_by": "Admin"})
                                     triage_history.append(rec)
                                     save_json(TRIAGE_FILE, triage_history)
                                     st.toast("Threat Triaged")
@@ -319,11 +349,8 @@ else:
                             st.rerun()
             else: st.info("No triage history found.")
 
-    # --- INVENTORY ---
     elif page == "Asset Inventory":
-        st.title("Asset Management") # REMOVED EMOJI
-        st.caption("Manage the Software Bill of Materials (SBOM).")
-        
+        st.title("Asset Management")
         with st.form("new_asset"):
             c1, c2, c3 = st.columns(3)
             name = c1.text_input("Software Name", placeholder="nginx")
@@ -349,31 +376,29 @@ else:
                         inventory["assets"].pop(i)
                         save_json(INVENTORY_FILE, inventory); st.rerun()
 
-    # --- SETTINGS ---
     elif page == "Settings":
         st.title("System Configuration")
         
-        st.subheader("Thresholds")
-        st.info(f"Current Policy: Alert on CVSS >= **{inventory.get('threshold_cvss', 7.0)}**")
-        
-        st.subheader("🔔 Notification Channels")
+        # NOTIFICATION POLICY
+        st.subheader("🔔 Slack Integration")
         with st.form("slack_config"):
             c1, c2 = st.columns(2)
-            current_webhook = inventory.get("slack_webhook", "")
-            current_channel = inventory.get("slack_channel", "#security-alerts")
+            webhook = c1.text_input("Webhook URL", value=inventory.get("slack_webhook", ""), type="password")
+            channel = c2.text_input("Channel Name", value=inventory.get("slack_channel", "#security-alerts"))
             
-            webhook = c1.text_input("Webhook URL", value=current_webhook, type="password")
-            channel = c2.text_input("Channel Name", value=current_channel)
-            bot_name = st.text_input("Bot Name", value=inventory.get("slack_bot_name", "Guardian AI"))
+            c3, c4 = st.columns(2)
+            bot_name = c3.text_input("Bot Name", value=inventory.get("slack_bot_name", "Guardian AI"))
+            min_severity = c4.selectbox("Notification Policy", ["Critical Only", "High+", "Medium+", "All"], index=1)
             
             if st.form_submit_button("Save Configuration"):
                 inventory.update({
                     "slack_webhook": webhook, 
                     "slack_channel": channel, 
-                    "slack_bot_name": bot_name
+                    "slack_bot_name": bot_name,
+                    "slack_min_severity": min_severity
                 })
                 save_json(INVENTORY_FILE, inventory)
-                st.success("Configuration Saved")
+                st.success("Settings Saved")
         
         if inventory.get("slack_webhook"):
             if st.button("Send Test Notification"):
@@ -382,9 +407,8 @@ else:
                 else:
                     st.error("Failed. Check URL.")
 
-    # --- AUTO REFRESH HANDLER ---
+    # --- AUTO REFRESH ---
     if refresh_opt != "Off":
-        secs_map = {"5 Minutes": 300, "15 Minutes": 900, "1 Hour": 3600, "24 Hours": 86400}
-        wait_time = secs_map.get(refresh_opt, 300)
-        time.sleep(wait_time)
+        secs = {"5 Minutes": 300, "15 Minutes": 900, "1 Hour": 3600}.get(refresh_opt, 300)
+        time.sleep(secs)
         st.rerun()
