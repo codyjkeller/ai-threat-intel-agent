@@ -91,20 +91,33 @@ def save_json(filepath, data):
     else:
         with open(filepath, "w") as f: json.dump(data, f, indent=4)
 
+def normalize_severity(sev_str):
+    """Force severity into one of 4 buckets to fix filtering bugs."""
+    s = str(sev_str).upper().strip()
+    if "CRIT" in s: return "CRITICAL"
+    if "HIGH" in s: return "HIGH"
+    if "MED" in s: return "MEDIUM"
+    return "LOW"
+
 def repair_alert_data(alerts):
+    """Self-Healing: Fixes missing CVSS scores and normalizes severity."""
     repaired = False
     for a in alerts:
-        # Normalize Severity to Uppercase for filtering
-        if 'severity' in a:
-            a['severity'] = a['severity'].upper().strip()
-            
+        # Normalize Severity
+        old_sev = a.get('severity', 'LOW')
+        new_sev = normalize_severity(old_sev)
+        if old_sev != new_sev:
+            a['severity'] = new_sev
+            repaired = True
+
         # Fix missing CVSS
         if not a.get('cvss') or a.get('cvss') == 'N/A' or a.get('cvss') == 0.0:
-            if "CRIT" in a['severity']: a['cvss'] = 9.8
-            elif "HIGH" in a['severity']: a['cvss'] = 7.5
-            elif "MED" in a['severity']: a['cvss'] = 5.4
+            if new_sev == "CRITICAL": a['cvss'] = 9.8
+            elif new_sev == "HIGH": a['cvss'] = 7.5
+            elif new_sev == "MEDIUM": a['cvss'] = 5.4
             else: a['cvss'] = 3.0
             repaired = True
+            
         # Fix broken links
         if not a.get('url') or a.get('url') == '#':
             a['url'] = f"https://nvd.nist.gov/vuln/detail/{a['cve']}"
@@ -116,9 +129,12 @@ def repair_alert_data(alerts):
 def extract_cvss(title, severity):
     match = re.search(r'\(([\d\.]+)', title)
     if match: return float(match.group(1))
-    if severity == "CRITICAL": return 9.8
-    if severity == "HIGH": return 7.5
-    if severity == "MEDIUM": return 5.3
+    
+    # Estimate based on normalized severity
+    sev = normalize_severity(severity)
+    if sev == "CRITICAL": return 9.8
+    if sev == "HIGH": return 7.5
+    if sev == "MEDIUM": return 5.3
     return 3.0
 
 def check_match(description, assets):
@@ -132,9 +148,10 @@ def check_match(description, assets):
 def calculate_risk_score(alerts):
     score = 0
     for a in alerts:
-        if "CRIT" in a['severity']: score += 100
-        elif "HIGH" in a['severity']: score += 50
-        elif "MED" in a['severity']: score += 20
+        s = a.get('severity', 'LOW')
+        if "CRIT" in s: score += 100
+        elif "HIGH" in s: score += 50
+        elif "MED" in s: score += 20
         else: score += 5
     return score
 
@@ -142,7 +159,9 @@ def calculate_risk_score(alerts):
 
 def send_real_alert(webhook, channel, bot_name, alert):
     if not webhook: return
+    
     color = "#DC2626" if "CRIT" in alert['severity'] else "#EA580C" if "HIGH" in alert['severity'] else "#CA8A04"
+    
     payload = {
         "username": bot_name,
         "channel": channel,
@@ -152,9 +171,9 @@ def send_real_alert(webhook, channel, bot_name, alert):
             "title_link": alert.get('url'),
             "text": alert['description'][:200] + "...",
             "fields": [
-                {"title": "CVE", "value": alert['cve'], "short": True},
-                {"title": "CVSS", "value": str(alert.get('cvss', 'N/A')), "short": True},
-                {"title": "Source", "value": alert['source'], "short": True}
+                {"title": "Impacted Asset", "value": alert['affected_asset'], "short": True},
+                {"title": "CVSS Score", "value": str(alert.get('cvss', 'N/A')), "short": True},
+                {"title": "CVE ID", "value": alert['cve'], "short": True}
             ],
             "footer": "Guardian AI",
             "ts": time.time()
@@ -174,13 +193,17 @@ def run_scan():
     alerts = load_json(ALERTS_FILE, [])
     new_finds = 0
     
+    # Priority Map for Slack Filtering
     sev_map = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
     min_map = {"Critical Only": 4, "High+": 3, "Medium+": 2, "All": 1}
     threshold = min_map.get(min_alert_level, 3)
 
-    def process_finding(cve, asset, desc, sev, cvss, source, url, date):
+    def process_finding(cve, asset, desc, sev_raw, cvss, source, url, date):
         nonlocal new_finds
         if not url: url = f"https://nvd.nist.gov/vuln/detail/{cve}"
+        
+        # Normalize immediately
+        sev = normalize_severity(sev_raw)
         
         if not any(a['cve'] == cve for a in alerts):
             new_alert = {
@@ -190,28 +213,36 @@ def run_scan():
             }
             alerts.append(new_alert)
             new_finds += 1
+            
+            # Fire Slack Webhook if meets threshold
             if sev_map.get(sev, 1) >= threshold:
                 send_real_alert(webhook, channel, bot_name, new_alert)
 
+    # 1. CISA SCAN
     try:
         r = requests.get(CISA_KEV_URL).json()
         for vul in r.get("vulnerabilities", []):
             match = check_match(vul['product'], assets)
             if match:
-                process_finding(vul['cveID'], match, vul['shortDescription'], "CRITICAL", 9.8, "CISA KEV", f"https://nvd.nist.gov/vuln/detail/{vul['cveID']}", vul['dateAdded'])
+                process_finding(
+                    vul['cveID'], match, vul['shortDescription'], "CRITICAL", 9.8,
+                    "CISA KEV", f"https://nvd.nist.gov/vuln/detail/{vul['cveID']}", vul['dateAdded']
+                )
     except: pass
 
+    # 2. NIST SCAN
     try:
         feed = feedparser.parse(NIST_RSS_URL)
         for entry in feed.entries:
             match = check_match(entry.summary, assets)
             if match:
-                sev = "HIGH" if "HIGH" in entry.title.upper() else "MEDIUM"
-                if "CRITICAL" in entry.title.upper(): sev = "CRITICAL"
-                elif "LOW" in entry.title.upper(): sev = "LOW"
-                score = extract_cvss(entry.title, sev)
+                sev_raw = "MEDIUM"
+                if "HIGH" in entry.title.upper(): sev_raw = "HIGH"
+                if "CRITICAL" in entry.title.upper(): sev_raw = "CRITICAL"
+                
+                score = extract_cvss(entry.title, sev_raw)
                 cve = entry.title.split()[0]
-                process_finding(cve, match, entry.summary[:200]+"...", sev, score, "NIST NVD", entry.link, datetime.now().strftime("%Y-%m-%d"))
+                process_finding(cve, match, entry.summary[:200]+"...", sev_raw, score, "NIST NVD", entry.link, datetime.now().strftime("%Y-%m-%d"))
     except: pass
 
     save_json(ALERTS_FILE, alerts)
@@ -243,15 +274,18 @@ else:
         page = st.radio("Navigation", ["Dashboard", "Asset Inventory", "Settings"], label_visibility="collapsed")
         st.divider()
         st.markdown("### ⏱️ Live Mode")
-        # ADDED 30 SECONDS OPTION
+        # ADDED 30 SECONDS
         refresh_opt = st.selectbox("Auto-Refresh", ["Off", "30 Seconds", "5 Minutes", "15 Minutes", "1 Hour"], label_visibility="collapsed")
         st.divider()
         st.caption(f"User: **Admin**")
         if st.button("Log Out"): st.session_state.authenticated = False; st.rerun()
 
     inventory = st.session_state.get("temp_inventory", load_json(INVENTORY_FILE, {"assets": [], "threshold_cvss": 7.0}))
-    alerts = load_json(ALERTS_FILE, [])
-    alerts = repair_alert_data(alerts)
+    
+    # Load and Repair Data immediately to fix old keys
+    raw_alerts = load_json(ALERTS_FILE, [])
+    alerts = repair_alert_data(raw_alerts)
+    
     triage_history = load_json(TRIAGE_FILE, [])
     active_alerts = [a for a in alerts if a['cve'] not in [t['cve'] for t in triage_history]]
 
@@ -277,16 +311,16 @@ else:
         with st.expander("🔎 Filter Intelligence", expanded=True):
             f1, f2, f3 = st.columns(3)
             with f1: 
-                # SEVERITY FILTER FIXED: Matches keys exactly
+                # Clean MultiSelect
                 sev_filter = st.multiselect("Severity", ["CRITICAL", "HIGH", "MEDIUM", "LOW"], default=["CRITICAL", "HIGH"])
             with f2: sort_by = st.selectbox("Sort By", ["Risk (CVSS)", "Newest First", "Asset Name"])
             with f3: min_cvss = st.slider("Min CVSS", 0.0, 10.0, 0.0)
 
-        # ROBUST FILTERING LOGIC
-        # Normalizes to UPPERCASE to match filter selection
+        # STRICT FILTERING LOGIC
+        # Ensure we only compare normalized uppercase strings
         filtered = [
             a for a in active_alerts 
-            if a['severity'].upper() in sev_filter 
+            if a.get('severity', 'LOW').upper() in sev_filter 
             and a.get('cvss', 0) >= min_cvss
         ]
         
@@ -297,23 +331,21 @@ else:
         
         with t1:
             if not filtered: 
-                # Differentiate between "No threats exist" vs "Filters hid them"
                 if active_alerts:
-                    st.info(f"No threats match your filters (Hidden: {len(active_alerts)} alerts). Adjust severity or CVSS sliders.")
+                    st.info(f"0 alerts match filters. ({len(active_alerts)} hidden alerts exist).")
                 else:
                     st.success("System Clean. No active threats detected.")
             
             for row in filtered:
                 sev_map = {"CRITICAL": "crit", "HIGH": "high", "MEDIUM": "med", "LOW": "low"}
-                # Safe lookup using normalized uppercase severity
-                s_cls = sev_map.get(row['severity'].upper(), "low")
+                s_cls = sev_map.get(row['severity'], "low")
                 cvss_val = row.get('cvss', 0.0)
                 
                 with st.container(border=True):
                     c_main, c_act = st.columns([4, 1.5])
                     with c_main:
                         st.markdown(f"### {row['affected_asset'].upper()} | {row['cve']}")
-                        st.markdown(f"<span class='badge {s_cls}'>{row['severity'].upper()}</span> <span class='badge {s_cls}'>CVSS {cvss_val}</span>", unsafe_allow_html=True)
+                        st.markdown(f"<span class='badge {s_cls}'>{row['severity']}</span> <span class='badge {s_cls}'>CVSS {cvss_val}</span>", unsafe_allow_html=True)
                         st.write(row['description'])
                         st.caption(f"**Sources:** {row['source']} • **Detected:** {row['date']}")
                         st.markdown(f"[🔗 Read Full Intelligence Report]({row.get('url')})", unsafe_allow_html=True)
