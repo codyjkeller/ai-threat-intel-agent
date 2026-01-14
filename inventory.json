@@ -1,0 +1,16 @@
+{
+    "assets": [
+        "apache",
+        "nginx",
+        "kubernetes",
+        "postgres",
+        "redis",
+        "ios",
+        "android",
+        "windows_server",
+        "log4j",
+        "fortinet",
+        "salesforce"
+    ],
+    "threshold_cvss": 7.0
+}
