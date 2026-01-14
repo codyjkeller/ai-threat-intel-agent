@@ -6,7 +6,7 @@ import time
 import requests
 import feedparser
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # --- CONFIGURATION ---
 INVENTORY_FILE = "inventory.json"
@@ -47,6 +47,13 @@ st.markdown("""
     div.stButton > button:hover { 
         background-color: #334155 !important; 
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06) !important;
+    }
+    
+    /* RED DANGER BUTTONS */
+    button[kind="secondary"] {
+        background-color: #FEF2F2 !important;
+        color: #991B1B !important;
+        border: 1px solid #FECACA !important;
     }
 
     /* Cards */
@@ -92,50 +99,48 @@ def save_json(filepath, data):
         with open(filepath, "w") as f: json.dump(data, f, indent=4)
 
 def normalize_severity(sev_str):
-    """Force severity into one of 4 buckets to fix filtering bugs."""
+    """Force severity into one of 4 buckets."""
     s = str(sev_str).upper().strip()
     if "CRIT" in s: return "CRITICAL"
     if "HIGH" in s: return "HIGH"
     if "MED" in s: return "MEDIUM"
     return "LOW"
 
-def repair_alert_data(alerts):
-    """Self-Healing: Fixes missing CVSS scores and normalizes severity."""
-    repaired = False
+def repair_and_normalize_data(alerts):
+    """
+    Self-Healing: 
+    1. Fixes missing CVSS.
+    2. Normalizes Severity strings.
+    3. Drops corrupted rows.
+    """
+    cleaned = []
+    changes_made = False
+    
     for a in alerts:
-        # Normalize Severity
+        # Normalize Sev
         old_sev = a.get('severity', 'LOW')
         new_sev = normalize_severity(old_sev)
         if old_sev != new_sev:
             a['severity'] = new_sev
-            repaired = True
+            changes_made = True
 
-        # Fix missing CVSS
-        if not a.get('cvss') or a.get('cvss') == 'N/A' or a.get('cvss') == 0.0:
+        # Fix CVSS
+        if not a.get('cvss') or a.get('cvss') == 'N/A':
             if new_sev == "CRITICAL": a['cvss'] = 9.8
             elif new_sev == "HIGH": a['cvss'] = 7.5
             elif new_sev == "MEDIUM": a['cvss'] = 5.4
             else: a['cvss'] = 3.0
-            repaired = True
+            changes_made = True
             
-        # Fix broken links
+        # Fix URL
         if not a.get('url') or a.get('url') == '#':
             a['url'] = f"https://nvd.nist.gov/vuln/detail/{a['cve']}"
-            repaired = True
+            changes_made = True
             
-    if repaired: save_json(ALERTS_FILE, alerts)
-    return alerts
-
-def extract_cvss(title, severity):
-    match = re.search(r'\(([\d\.]+)', title)
-    if match: return float(match.group(1))
-    
-    # Estimate based on normalized severity
-    sev = normalize_severity(severity)
-    if sev == "CRITICAL": return 9.8
-    if sev == "HIGH": return 7.5
-    if sev == "MEDIUM": return 5.3
-    return 3.0
+        cleaned.append(a)
+            
+    if changes_made: save_json(ALERTS_FILE, cleaned)
+    return cleaned
 
 def check_match(description, assets):
     description = description.lower()
@@ -159,9 +164,7 @@ def calculate_risk_score(alerts):
 
 def send_real_alert(webhook, channel, bot_name, alert):
     if not webhook: return
-    
     color = "#DC2626" if "CRIT" in alert['severity'] else "#EA580C" if "HIGH" in alert['severity'] else "#CA8A04"
-    
     payload = {
         "username": bot_name,
         "channel": channel,
@@ -172,7 +175,7 @@ def send_real_alert(webhook, channel, bot_name, alert):
             "text": alert['description'][:200] + "...",
             "fields": [
                 {"title": "Impacted Asset", "value": alert['affected_asset'], "short": True},
-                {"title": "CVSS Score", "value": str(alert.get('cvss', 'N/A')), "short": True},
+                {"title": "CVSS", "value": str(alert.get('cvss', 'N/A')), "short": True},
                 {"title": "CVE ID", "value": alert['cve'], "short": True}
             ],
             "footer": "Guardian AI",
@@ -182,7 +185,7 @@ def send_real_alert(webhook, channel, bot_name, alert):
     try: requests.post(webhook, json=payload)
     except: pass
 
-def run_scan():
+def run_scan(lookback_days=365):
     inv = st.session_state.get("temp_inventory", load_json(INVENTORY_FILE, {"assets": []}))
     assets = inv.get("assets", [])
     webhook = inv.get("slack_webhook")
@@ -193,28 +196,33 @@ def run_scan():
     alerts = load_json(ALERTS_FILE, [])
     new_finds = 0
     
-    # Priority Map for Slack Filtering
+    # Priority Map
     sev_map = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
     min_map = {"Critical Only": 4, "High+": 3, "Medium+": 2, "All": 1}
     threshold = min_map.get(min_alert_level, 3)
+    
+    cutoff_date = datetime.now() - timedelta(days=lookback_days)
 
-    def process_finding(cve, asset, desc, sev_raw, cvss, source, url, date):
+    def process_finding(cve, asset, desc, sev_raw, cvss, source, url, date_str):
         nonlocal new_finds
-        if not url: url = f"https://nvd.nist.gov/vuln/detail/{cve}"
         
-        # Normalize immediately
+        # Date Filter
+        try:
+            d_obj = datetime.strptime(date_str, "%Y-%m-%d")
+            if d_obj < cutoff_date: return # Skip old alerts
+        except: pass # If date parse fails, keep it safe
+        
         sev = normalize_severity(sev_raw)
+        if not url: url = f"https://nvd.nist.gov/vuln/detail/{cve}"
         
         if not any(a['cve'] == cve for a in alerts):
             new_alert = {
                 "cve": cve, "affected_asset": asset, "description": desc,
                 "severity": sev, "cvss": cvss, "source": source,
-                "url": url, "date": date
+                "url": url, "date": date_str
             }
             alerts.append(new_alert)
             new_finds += 1
-            
-            # Fire Slack Webhook if meets threshold
             if sev_map.get(sev, 1) >= threshold:
                 send_real_alert(webhook, channel, bot_name, new_alert)
 
@@ -224,10 +232,8 @@ def run_scan():
         for vul in r.get("vulnerabilities", []):
             match = check_match(vul['product'], assets)
             if match:
-                process_finding(
-                    vul['cveID'], match, vul['shortDescription'], "CRITICAL", 9.8,
-                    "CISA KEV", f"https://nvd.nist.gov/vuln/detail/{vul['cveID']}", vul['dateAdded']
-                )
+                # CISA dates are YYYY-MM-DD
+                process_finding(vul['cveID'], match, vul['shortDescription'], "CRITICAL", 9.8, "CISA KEV", f"https://nvd.nist.gov/vuln/detail/{vul['cveID']}", vul['dateAdded'])
     except: pass
 
     # 2. NIST SCAN
@@ -239,10 +245,15 @@ def run_scan():
                 sev_raw = "MEDIUM"
                 if "HIGH" in entry.title.upper(): sev_raw = "HIGH"
                 if "CRITICAL" in entry.title.upper(): sev_raw = "CRITICAL"
+                # NIST dates need parsing, usually simplified to Today for RSS feeds
+                date_str = datetime.now().strftime("%Y-%m-%d") 
                 
-                score = extract_cvss(entry.title, sev_raw)
+                # Regex for CVSS
+                match_cvss = re.search(r'\(([\d\.]+)', entry.title)
+                score = float(match_cvss.group(1)) if match_cvss else (9.8 if sev_raw=="CRITICAL" else 7.5 if sev_raw=="HIGH" else 5.0)
+                
                 cve = entry.title.split()[0]
-                process_finding(cve, match, entry.summary[:200]+"...", sev_raw, score, "NIST NVD", entry.link, datetime.now().strftime("%Y-%m-%d"))
+                process_finding(cve, match, entry.summary[:200]+"...", sev_raw, score, "NIST NVD", entry.link, date_str)
     except: pass
 
     save_json(ALERTS_FILE, alerts)
@@ -274,7 +285,6 @@ else:
         page = st.radio("Navigation", ["Dashboard", "Asset Inventory", "Settings"], label_visibility="collapsed")
         st.divider()
         st.markdown("### ⏱️ Live Mode")
-        # ADDED 30 SECONDS
         refresh_opt = st.selectbox("Auto-Refresh", ["Off", "30 Seconds", "5 Minutes", "15 Minutes", "1 Hour"], label_visibility="collapsed")
         st.divider()
         st.caption(f"User: **Admin**")
@@ -282,9 +292,9 @@ else:
 
     inventory = st.session_state.get("temp_inventory", load_json(INVENTORY_FILE, {"assets": [], "threshold_cvss": 7.0}))
     
-    # Load and Repair Data immediately to fix old keys
+    # LOAD & REPAIR DATA
     raw_alerts = load_json(ALERTS_FILE, [])
-    alerts = repair_alert_data(raw_alerts)
+    alerts = repair_and_normalize_data(raw_alerts)
     
     triage_history = load_json(TRIAGE_FILE, [])
     active_alerts = [a for a in alerts if a['cve'] not in [t['cve'] for t in triage_history]]
@@ -295,8 +305,10 @@ else:
         with c2: 
             if st.button("🔄 Refresh Feeds"):
                 with st.spinner("Aggregating Intelligence..."):
-                    n = run_scan()
-                    st.toast(f"Intelligence Updated: {n} new findings")
+                    # Use timeframe from settings, default 365
+                    lookback = inventory.get("lookback_days", 365)
+                    n = run_scan(lookback)
+                    st.toast(f"Updated: {n} new findings (Last {lookback} days)")
                     time.sleep(1); st.rerun()
 
         risk_score = calculate_risk_score(active_alerts)
@@ -308,22 +320,28 @@ else:
 
         st.divider()
         
+        # FILTERS
         with st.expander("🔎 Filter Intelligence", expanded=True):
             f1, f2, f3 = st.columns(3)
             with f1: 
-                # Clean MultiSelect
                 sev_filter = st.multiselect("Severity", ["CRITICAL", "HIGH", "MEDIUM", "LOW"], default=["CRITICAL", "HIGH"])
             with f2: sort_by = st.selectbox("Sort By", ["Risk (CVSS)", "Newest First", "Asset Name"])
             with f3: min_cvss = st.slider("Min CVSS", 0.0, 10.0, 0.0)
 
-        # STRICT FILTERING LOGIC
-        # Ensure we only compare normalized uppercase strings
-        filtered = [
-            a for a in active_alerts 
-            if a.get('severity', 'LOW').upper() in sev_filter 
-            and a.get('cvss', 0) >= min_cvss
-        ]
+        # DEBUG: Uncomment to see what the filter sees
+        # st.write(f"DEBUG: Active Alerts: {len(active_alerts)} | Filter Sev: {sev_filter}")
+
+        # STRICT FILTERING
+        filtered = []
+        for a in active_alerts:
+            # 1. Normalize alert severity to match filter keys
+            s_norm = normalize_severity(a.get('severity', 'LOW'))
+            
+            # 2. Check Match
+            if s_norm in sev_filter and a.get('cvss', 0) >= min_cvss:
+                filtered.append(a)
         
+        # SORTING
         if "Risk" in sort_by: filtered.sort(key=lambda x: x.get('cvss', 0), reverse=True)
         elif "Newest" in sort_by: filtered.sort(key=lambda x: x['date'], reverse=True)
         
@@ -332,20 +350,21 @@ else:
         with t1:
             if not filtered: 
                 if active_alerts:
-                    st.info(f"0 alerts match filters. ({len(active_alerts)} hidden alerts exist).")
+                    st.info(f"0 alerts match your filters ({len(active_alerts)} hidden). Try selecting more Severities.")
                 else:
                     st.success("System Clean. No active threats detected.")
             
             for row in filtered:
                 sev_map = {"CRITICAL": "crit", "HIGH": "high", "MEDIUM": "med", "LOW": "low"}
-                s_cls = sev_map.get(row['severity'], "low")
+                s_norm = normalize_severity(row.get('severity'))
+                s_cls = sev_map.get(s_norm, "low")
                 cvss_val = row.get('cvss', 0.0)
                 
                 with st.container(border=True):
                     c_main, c_act = st.columns([4, 1.5])
                     with c_main:
                         st.markdown(f"### {row['affected_asset'].upper()} | {row['cve']}")
-                        st.markdown(f"<span class='badge {s_cls}'>{row['severity']}</span> <span class='badge {s_cls}'>CVSS {cvss_val}</span>", unsafe_allow_html=True)
+                        st.markdown(f"<span class='badge {s_cls}'>{s_norm}</span> <span class='badge {s_cls}'>CVSS {cvss_val}</span>", unsafe_allow_html=True)
                         st.write(row['description'])
                         st.caption(f"**Sources:** {row['source']} • **Detected:** {row['date']}")
                         st.markdown(f"[🔗 Read Full Intelligence Report]({row.get('url')})", unsafe_allow_html=True)
@@ -412,25 +431,41 @@ else:
     elif page == "Settings":
         st.title("System Configuration")
         
-        st.subheader("Thresholds")
-        st.info(f"Current Policy: Alert on CVSS >= **{inventory.get('threshold_cvss', 7.0)}**")
+        # 1. DATABASE MANAGEMENT (THE FIX)
+        st.subheader("⚠️ Database Management")
+        st.warning("Use this to clear stuck alerts or reset the system.")
+        if st.button("🗑️ Flush Alert Database (Hard Reset)", type="primary"):
+            if os.path.exists(ALERTS_FILE): os.remove(ALERTS_FILE)
+            if os.path.exists(TRIAGE_FILE): os.remove(TRIAGE_FILE)
+            st.toast("Database Flushed. Please Refresh Feeds.")
+            time.sleep(1); st.rerun()
+
+        st.divider()
         
+        # 2. DATA RETENTION
+        st.subheader("Data Retention")
+        days = st.selectbox("Feed Lookback Period", [30, 90, 365, 730], index=2, help="Only fetch alerts newer than this.")
+        if days != inventory.get("lookback_days"):
+            inventory["lookback_days"] = days
+            save_json(INVENTORY_FILE, inventory)
+            st.toast("Settings Saved")
+
+        st.divider()
+        
+        # 3. NOTIFICATIONS
         st.subheader("🔔 Notification Channels")
         with st.form("slack_config"):
             c1, c2 = st.columns(2)
             webhook = c1.text_input("Webhook URL", value=inventory.get("slack_webhook", ""), type="password")
             channel = c2.text_input("Channel Name", value=inventory.get("slack_channel", "#security-alerts"))
-            
             c3, c4 = st.columns(2)
             bot_name = c3.text_input("Bot Name", value=inventory.get("slack_bot_name", "Guardian AI"))
             min_severity = c4.selectbox("Notification Policy", ["Critical Only", "High+", "Medium+", "All"], index=1)
             
             if st.form_submit_button("Save Configuration"):
                 inventory.update({
-                    "slack_webhook": webhook, 
-                    "slack_channel": channel, 
-                    "slack_bot_name": bot_name,
-                    "slack_min_severity": min_severity
+                    "slack_webhook": webhook, "slack_channel": channel, 
+                    "slack_bot_name": bot_name, "slack_min_severity": min_severity
                 })
                 save_json(INVENTORY_FILE, inventory)
                 st.success("Settings Saved")
@@ -439,8 +474,7 @@ else:
             if st.button("Send Test Notification"):
                 if send_slack_test(inventory["slack_webhook"], inventory.get("slack_channel"), inventory.get("slack_bot_name")):
                     st.toast("Test Sent!", icon="✅")
-                else:
-                    st.error("Failed. Check URL.")
+                else: st.error("Failed.")
 
     # --- AUTO REFRESH ---
     if refresh_opt != "Off":
