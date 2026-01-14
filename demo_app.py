@@ -34,7 +34,7 @@ st.markdown("""
         color: #0F172A; 
     }
     
-    /* FORCE NAVY BLUE BUTTONS (Overrides Streamlit Red/Primary) */
+    /* FORCE NAVY BLUE BUTTONS */
     div.stButton > button { 
         background-color: #0F172A !important; 
         color: white !important; 
@@ -48,13 +48,6 @@ st.markdown("""
         background-color: #334155 !important; 
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06) !important;
     }
-    
-    /* Secondary Action Buttons (Ghost Style) */
-    button[kind="secondary"] {
-        background-color: white !important;
-        color: #0F172A !important;
-        border: 1px solid #E2E8F0 !important;
-    }
 
     /* Cards */
     div[data-testid="stMetric"] { 
@@ -64,7 +57,7 @@ st.markdown("""
         padding: 16px; 
     }
 
-    /* Severity Badges (High Contrast) */
+    /* Severity Badges */
     .badge {
         padding: 4px 10px;
         border-radius: 6px;
@@ -87,36 +80,38 @@ st.markdown("""
 # --- HELPER FUNCTIONS ---
 
 def load_json(filepath, default):
-    """Load JSON with Cloud Secrets fallback"""
     if "inventory" in st.secrets and filepath == INVENTORY_FILE:
         return dict(st.secrets["inventory"])
     if not os.path.exists(filepath): return default
     with open(filepath, "r") as f: return json.load(f)
 
 def save_json(filepath, data):
-    """Save JSON (Session state fallback for Cloud)"""
     if "inventory" in st.secrets and filepath == INVENTORY_FILE:
         st.session_state.temp_inventory = data
     else:
         with open(filepath, "w") as f: json.dump(data, f, indent=4)
 
 def repair_alert_data(alerts):
-    """Self-Healing: Fixes missing CVSS scores."""
     repaired = False
     for a in alerts:
+        # Fix missing CVSS
         if not a.get('cvss') or a.get('cvss') == 'N/A' or a.get('cvss') == 0.0:
             if "CRIT" in a['severity']: a['cvss'] = 9.8
             elif "HIGH" in a['severity']: a['cvss'] = 7.5
             elif "MED" in a['severity']: a['cvss'] = 5.4
-            elif "LOW" in a['severity']: a['cvss'] = 3.0
+            else: a['cvss'] = 3.0
             repaired = True
+        # Fix broken links
+        if not a.get('url') or a.get('url') == '#':
+            a['url'] = f"https://nvd.nist.gov/vuln/detail/{a['cve']}"
+            repaired = True
+            
     if repaired: save_json(ALERTS_FILE, alerts)
     return alerts
 
 def extract_cvss(title, severity):
     match = re.search(r'\(([\d\.]+)', title)
     if match: return float(match.group(1))
-    
     if severity == "CRITICAL": return 9.8
     if severity == "HIGH": return 7.5
     if severity == "MEDIUM": return 5.3
@@ -147,6 +142,9 @@ def run_scan():
     
     def update_or_add(cve, asset, desc, sev, cvss, source, url, date):
         nonlocal new_finds
+        # Ensure URL is never empty
+        if not url: url = f"https://nvd.nist.gov/vuln/detail/{cve}"
+        
         existing = next((a for a in alerts if a['cve'] == cve), None)
         if existing:
             if source not in existing['source']:
@@ -215,6 +213,12 @@ else:
         st.title("Guardian AI")
         page = st.radio("Navigation", ["Dashboard", "Asset Inventory", "Settings"], label_visibility="collapsed")
         st.divider()
+        
+        # AUTO REFRESH LOGIC
+        st.markdown("### ⏱️ Live Mode")
+        refresh_opt = st.selectbox("Auto-Refresh", ["Off", "5 Minutes", "15 Minutes", "1 Hour", "24 Hours"])
+        
+        st.divider()
         st.caption(f"User: **Admin**")
         if st.button("Log Out"): st.session_state.authenticated = False; st.rerun()
 
@@ -275,7 +279,8 @@ else:
                         st.markdown(f"<span class='badge {s_cls}'>{row['severity']}</span> <span class='badge {s_cls}'>CVSS {cvss_val}</span>", unsafe_allow_html=True)
                         st.write(row['description'])
                         st.caption(f"**Sources:** {row['source']} • **Detected:** {row['date']}")
-                        st.markdown(f"[🔗 Read Full Intelligence Report]({row.get('url', '#')})")
+                        # ROBUST LINK: Uses row['url'] which is now guaranteed by repair_alert_data
+                        st.markdown(f"[🔗 Read Full Intelligence Report]({row.get('url')})", unsafe_allow_html=True)
                     
                     with c_act:
                         st.write("**Triage Decision**")
@@ -316,7 +321,9 @@ else:
 
     # --- INVENTORY ---
     elif page == "Asset Inventory":
-        st.title("Asset Inventory")
+        st.title("Asset Management") # REMOVED EMOJI
+        st.caption("Manage the Software Bill of Materials (SBOM).")
+        
         with st.form("new_asset"):
             c1, c2, c3 = st.columns(3)
             name = c1.text_input("Software Name", placeholder="nginx")
@@ -346,14 +353,12 @@ else:
     elif page == "Settings":
         st.title("System Configuration")
         
-        # SLACK CONFIG FORM
-        st.subheader("🔔 Notification Channels")
-        st.caption("Configure Slack to receive real-time alerts. Test the connection below.")
+        st.subheader("Thresholds")
+        st.info(f"Current Policy: Alert on CVSS >= **{inventory.get('threshold_cvss', 7.0)}**")
         
-        # Unlock input even in Cloud Mode so user can TEST it
+        st.subheader("🔔 Notification Channels")
         with st.form("slack_config"):
             c1, c2 = st.columns(2)
-            # Pre-fill if exists, otherwise blank
             current_webhook = inventory.get("slack_webhook", "")
             current_channel = inventory.get("slack_channel", "#security-alerts")
             
@@ -368,24 +373,18 @@ else:
                     "slack_bot_name": bot_name
                 })
                 save_json(INVENTORY_FILE, inventory)
-                st.success("Configuration Saved (Session)")
+                st.success("Configuration Saved")
         
-        st.divider()
-        
-        # TEST CONNECTION
-        c_test, c_status = st.columns([1, 3])
-        with c_test:
+        if inventory.get("slack_webhook"):
             if st.button("Send Test Notification"):
-                if inventory.get("slack_webhook"):
-                    if send_slack_test(inventory["slack_webhook"], inventory.get("slack_channel"), inventory.get("slack_bot_name")):
-                        st.toast("Test Sent!", icon="✅")
-                    else:
-                        st.error("Failed. Check URL.")
+                if send_slack_test(inventory["slack_webhook"], inventory.get("slack_channel"), inventory.get("slack_bot_name")):
+                    st.toast("Test Sent!", icon="✅")
                 else:
-                    st.warning("Save a Webhook URL first.")
-        
-        with c_status:
-            if inventory.get("slack_webhook"):
-                st.markdown("✅ **Status:** Integration Active")
-            else:
-                st.markdown("⚪ **Status:** Not Configured")
+                    st.error("Failed. Check URL.")
+
+    # --- AUTO REFRESH HANDLER ---
+    if refresh_opt != "Off":
+        secs_map = {"5 Minutes": 300, "15 Minutes": 900, "1 Hour": 3600, "24 Hours": 86400}
+        wait_time = secs_map.get(refresh_opt, 300)
+        time.sleep(wait_time)
+        st.rerun()
