@@ -9,3 +9,4 @@ requests
 schedule
 colorama
 streamlit
+plotly
