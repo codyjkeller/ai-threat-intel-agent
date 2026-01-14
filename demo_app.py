@@ -26,7 +26,7 @@ st.set_page_config(
 # --- ENTERPRISE CSS ---
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
     
     html, body, [class*="css"] { 
         font-family: 'Inter', sans-serif; 
@@ -34,7 +34,7 @@ st.markdown("""
         color: #0F172A; 
     }
     
-    /* Primary Action Buttons */
+    /* Buttons */
     .stButton>button { 
         background-color: #0F172A; 
         color: white; 
@@ -52,15 +52,15 @@ st.markdown("""
     /* Cards */
     div[data-testid="stMetric"] { 
         background-color: #F8FAFC; 
-        padding: 16px; 
-        border-radius: 8px; 
         border: 1px solid #E2E8F0; 
+        border-radius: 8px; 
+        padding: 16px;
     }
 
-    /* Severity Badges (High Contrast) */
+    /* Severity Badges */
     .badge {
-        padding: 4px 8px;
-        border-radius: 4px;
+        padding: 4px 10px;
+        border-radius: 6px;
         font-weight: 700;
         font-size: 0.85em;
         display: inline-block;
@@ -80,22 +80,31 @@ st.markdown("""
 # --- HELPER FUNCTIONS ---
 
 def load_json(filepath, default):
-    """Load JSON with Streamlit Secrets fallback"""
     if "inventory" in st.secrets and filepath == INVENTORY_FILE:
         return dict(st.secrets["inventory"])
     if not os.path.exists(filepath): return default
     with open(filepath, "r") as f: return json.load(f)
 
 def save_json(filepath, data):
-    """Save JSON (Session state fallback for Cloud)"""
     if "inventory" in st.secrets and filepath == INVENTORY_FILE:
         st.session_state.temp_inventory = data
     else:
         with open(filepath, "w") as f: json.dump(data, f, indent=4)
 
-def extract_cvss(title_text):
-    match = re.search(r'\(([\d\.]+)', title_text)
-    return float(match.group(1)) if match else 0.0
+def extract_cvss(title, severity):
+    """
+    Extracts CVSS from title or estimates based on Severity if missing.
+    Ensures the UI always has a number to display.
+    """
+    match = re.search(r'\(([\d\.]+)', title)
+    if match:
+        return float(match.group(1))
+    
+    # Fallback Estimates if feed is missing score
+    if severity == "CRITICAL": return 9.8
+    if severity == "HIGH": return 7.5
+    if severity == "MEDIUM": return 5.3
+    return 0.0
 
 def check_match(description, assets):
     description = description.lower()
@@ -106,7 +115,6 @@ def check_match(description, assets):
     return None
 
 def calculate_risk_score(alerts):
-    """Proprietary Risk Algorithm"""
     score = 0
     for a in alerts:
         if "CRIT" in a['severity']: score += 100
@@ -121,19 +129,12 @@ def run_scan():
     alerts = load_json(ALERTS_FILE, [])
     new_finds = 0
     
-    # SCAN LOGIC WITH SOURCE AGGREGATION
     def update_or_add(cve, asset, desc, sev, cvss, source, url, date):
         nonlocal new_finds
         existing = next((a for a in alerts if a['cve'] == cve), None)
-        
         if existing:
-            # Aggregate Source if new
             if source not in existing['source']:
                 existing['source'] += f", {source}"
-                # Upgrade severity if CISA says Critical but NVD said High
-                if sev == "CRITICAL" and existing['severity'] != "CRITICAL":
-                    existing['severity'] = "CRITICAL"
-                    existing['cvss'] = 9.8
         else:
             alerts.append({
                 "cve": cve, "affected_asset": asset, "description": desc,
@@ -142,7 +143,7 @@ def run_scan():
             })
             new_finds += 1
 
-    # 1. CISA KEV
+    # 1. CISA KEV (Always Critical)
     try:
         r = requests.get(CISA_KEV_URL).json()
         for vul in r.get("vulnerabilities", []):
@@ -154,7 +155,7 @@ def run_scan():
                 )
     except: pass
 
-    # 2. NIST RSS
+    # 2. NIST SCAN
     try:
         feed = feedparser.parse(NIST_RSS_URL)
         for entry in feed.entries:
@@ -164,7 +165,7 @@ def run_scan():
                 if "CRITICAL" in entry.title.upper(): sev = "CRITICAL"
                 elif "LOW" in entry.title.upper(): sev = "LOW"
                 
-                score = extract_cvss(entry.title)
+                score = extract_cvss(entry.title, sev)
                 cve = entry.title.split()[0]
                 
                 update_or_add(
@@ -185,24 +186,19 @@ if not st.session_state.authenticated:
     with c2:
         st.markdown("<br><br><h1 style='text-align: center; font-size: 60px;'>🛡️</h1>", unsafe_allow_html=True)
         st.markdown("<h2 style='text-align: center;'>Guardian AI</h2>", unsafe_allow_html=True)
-        st.markdown("<p style='text-align: center; color: #64748B;'>Enterprise Vulnerability Intelligence</p>", unsafe_allow_html=True)
         if st.button("Sign In with SSO", use_container_width=True):
-            time.sleep(0.5)
-            st.session_state.authenticated = True
-            st.rerun()
+            time.sleep(0.5); st.session_state.authenticated = True; st.rerun()
 else:
     with st.sidebar:
         st.title("Guardian AI")
         page = st.radio("Navigation", ["Dashboard", "Asset Inventory", "Settings"], label_visibility="collapsed")
         st.divider()
-        st.caption("v2.6.0-Enterprise")
+        st.caption("Admin User")
         if st.button("Log Out"): st.session_state.authenticated = False; st.rerun()
 
     inventory = st.session_state.get("temp_inventory", load_json(INVENTORY_FILE, {"assets": [], "threshold_cvss": 7.0}))
     alerts = load_json(ALERTS_FILE, [])
     triage_history = load_json(TRIAGE_FILE, [])
-    
-    # Filter Triaged
     active_alerts = [a for a in alerts if a['cve'] not in [t['cve'] for t in triage_history]]
 
     if page == "Dashboard":
@@ -215,10 +211,7 @@ else:
                     st.toast(f"Intelligence Updated: {n} new findings")
                     time.sleep(1); st.rerun()
 
-        # RISK SCORE CALCULATION
         risk_score = calculate_risk_score(active_alerts)
-        risk_color = "red" if risk_score > 500 else "orange" if risk_score > 100 else "green"
-
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Global Risk Score", risk_score, delta="Live Index", delta_color="inverse")
         m2.metric("Active Threats", len(active_alerts))
@@ -227,27 +220,24 @@ else:
 
         st.divider()
         
-        # FILTERS
         with st.expander("🔎 Filter Intelligence", expanded=True):
             f1, f2, f3 = st.columns(3)
-            with f1: sev_filter = st.multiselect("Severity", ["CRITICAL", "HIGH", "MEDIUM", "LOW"], default=["CRITICAL", "HIGH"])
+            with f1: 
+                st.caption("Severity Levels")
+                st.markdown("<span style='color:#991B1B; font-weight:bold'>CRITICAL</span> • <span style='color:#9A3412; font-weight:bold'>HIGH</span> • <span style='color:#854D0E; font-weight:bold'>MEDIUM</span>", unsafe_allow_html=True)
+                sev_filter = st.multiselect("Select Severity", ["CRITICAL", "HIGH", "MEDIUM", "LOW"], default=["CRITICAL", "HIGH"], label_visibility="collapsed")
             with f2: sort_by = st.selectbox("Sort By", ["Risk (CVSS)", "Newest First", "Asset Name"])
             with f3: min_cvss = st.slider("Min CVSS", 0.0, 10.0, 0.0)
 
-        # LIST RENDERING
         filtered = [a for a in active_alerts if a['severity'] in sev_filter and a.get('cvss', 0) >= min_cvss]
-        
         if "Risk" in sort_by: filtered.sort(key=lambda x: x.get('cvss', 0), reverse=True)
         elif "Newest" in sort_by: filtered.sort(key=lambda x: x['date'], reverse=True)
         
-        t1, t2 = st.tabs(["🔥 Active Threats", "✅ Triage Log"])
+        t1, t2 = st.tabs(["Active Threats", "Triage Log"])
         
         with t1:
-            if not filtered:
-                st.success("No threats match your current filters. System clean.")
-            
+            if not filtered: st.success("No threats match your current filters.")
             for row in filtered:
-                # Assign Badge Class
                 sev_map = {"CRITICAL": "crit", "HIGH": "high", "MEDIUM": "med", "LOW": "low"}
                 s_cls = sev_map.get(row['severity'], "low")
                 cvss_val = row.get('cvss', 'N/A')
@@ -263,25 +253,30 @@ else:
                     
                     with c_act:
                         st.write("**Triage Decision**")
-                        decision = st.selectbox("Action", ["Select...", "True Positive", "False Positive", "Mitigated"], key=f"s_{row['cve']}")
-                        reason = st.text_input("Notes", key=f"n_{row['cve']}")
-                        
-                        if st.button("Confirm", key=f"b_{row['cve']}", type="primary", disabled=decision=="Select..."):
-                            rec = row.copy()
-                            rec.update({"decision": decision, "notes": reason, "triaged_at": str(datetime.now())})
-                            triage_history.append(rec)
-                            save_json(TRIAGE_FILE, triage_history)
-                            st.toast("Threat Triaged")
-                            time.sleep(0.5); st.rerun()
+                        with st.form(key=f"form_{row['cve']}"):
+                            decision = st.selectbox("Status", ["Select...", "True Positive", "False Positive", "Mitigated"], label_visibility="collapsed")
+                            reason = st.text_input("Reasoning", placeholder="Notes...")
+                            if st.form_submit_button("Confirm Triage", type="primary"):
+                                if decision != "Select...":
+                                    rec = row.copy()
+                                    rec.update({"decision": decision, "notes": reason, "triaged_at": str(datetime.now()), "triaged_by": "Admin"})
+                                    triage_history.append(rec)
+                                    save_json(TRIAGE_FILE, triage_history)
+                                    st.toast("Threat Triaged")
+                                    time.sleep(0.5); st.rerun()
+                                else:
+                                    st.warning("Select a status.")
 
         with t2:
             if triage_history:
-                st.caption("Recent actions. Click Undo to restore to active feed.")
+                st.caption("Recent actions.")
                 for item in reversed(triage_history):
                     with st.expander(f"{item['decision']}: {item['cve']} ({item['affected_asset']})"):
-                        st.write(f"**Reasoning:** {item.get('notes', 'N/A')}")
-                        st.caption(f"Actioned: {item['triaged_at']}")
-                        if st.button("↩️ Undo", key=f"undo_{item['cve']}"):
+                        c1, c2 = st.columns(2)
+                        c1.write(f"**Owner:** {item.get('triaged_by', 'System')}")
+                        c1.write(f"**Reason:** {item.get('notes', 'N/A')}")
+                        c2.caption(f"Time: {item['triaged_at']}")
+                        if c2.button("Undo", key=f"undo_{item['cve']}"):
                             triage_history.remove(item)
                             save_json(TRIAGE_FILE, triage_history)
                             st.rerun()
@@ -289,8 +284,6 @@ else:
 
     elif page == "Asset Inventory":
         st.title("Asset Inventory")
-        st.write("Manage the Software Bill of Materials (SBOM).")
-        
         with st.form("new_asset"):
             c1, c2, c3 = st.columns(3)
             name = c1.text_input("Software Name", placeholder="nginx")
@@ -299,15 +292,13 @@ else:
             if st.form_submit_button("Add Asset"):
                 if name:
                     inventory["assets"].append({"name": name, "version": ver, "description": owner, "added_by": "Admin", "date": str(datetime.now().date())})
-                    save_json(INVENTORY_FILE, inventory)
-                    st.rerun()
+                    save_json(INVENTORY_FILE, inventory); st.rerun()
         
         st.divider()
         if inventory["assets"]:
             for i, a in enumerate(inventory["assets"]):
                 name = a.get("name") if isinstance(a, dict) else a
                 desc = a.get("description", "") if isinstance(a, dict) else ""
-                
                 c1, c2, c3, c4 = st.columns([2, 1, 2, 0.5])
                 c1.markdown(f"**{name}**")
                 c2.caption(f"v{a.get('version', 'All')}" if isinstance(a, dict) else "vAll")
@@ -318,16 +309,6 @@ else:
 
     elif page == "Settings":
         st.title("System Configuration")
-        
-        st.subheader("Thresholds")
         st.info(f"Current Policy: Alert on CVSS >= **{inventory.get('threshold_cvss', 7.0)}**")
-        
-        st.subheader("Integrations")
-        if inventory.get("slack_webhook"):
-            st.success("✅ Slack Integration Active")
-        else:
-            st.warning("⚠️ Slack Integration Inactive")
-            
-        with st.expander("Update Configuration"):
-            st.write("To update settings, modify `inventory.json` or Streamlit Secrets.")
-            st.code(json.dumps(inventory, indent=4), language="json")
+        if inventory.get("slack_webhook"): st.success("✅ Slack Active")
+        else: st.warning("⚠️ Slack Inactive")
