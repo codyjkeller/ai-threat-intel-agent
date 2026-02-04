@@ -1,117 +1,97 @@
 import os
-import json
-import requests
-import datetime
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich.markdown import Markdown
 
-# Load Environment Variables (for OpenAI Key)
+# Import our new Enterprise modules
+from feeds import FeedAggregator, ThreatIntel
+
+# Load Environment Variables
 load_dotenv()
 console = Console()
-
-# --- CONFIGURATION ---
-CISA_KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OTX_API_KEY = os.getenv("OTX_API_KEY") # New Env Var support
 
-def fetch_threats():
-    """Get the latest Known Exploited Vulnerabilities from CISA."""
-    console.print(f"[bold cyan]🔍 Scanning CISA Threat Feed...[/bold cyan]")
-    try:
-        response = requests.get(CISA_KEV_URL)
-        response.raise_for_status()
-        data = response.json()
-        return data['vulnerabilities']
-    except Exception as e:
-        console.print(f"[bold red]❌ Error fetching feed: {e}[/bold red]")
-        return []
-
-def filter_recent_threats(vulnerabilities, limit=5):
-    """Sort by dateAdded and return the most recent ones."""
-    # Sort descending by date
-    sorted_vulns = sorted(vulnerabilities, key=lambda x: x['dateAdded'], reverse=True)
-    return sorted_vulns[:limit]
-
-def generate_ai_summary(threats):
+def generate_ai_briefing(threats: list[ThreatIntel]):
     """
-    Uses OpenAI to generate a BLUF (Bottom Line Up Front) strategic summary.
+    Generates a BLUF (Bottom Line Up Front) executive summary using OpenAI.
     """
-    # Prepare the data
-    threat_text = "\n".join([f"- {t['cveID']}: {t['vulnerabilityName']} (Product: {t['product']})" for t in threats])
+    # Convert object list to text summary for the LLM
+    threat_text = "\n".join([f"- [{t.severity}] {t.cve_id}: {t.title} ({t.product})" for t in threats[:10]])
 
     if OPENAI_API_KEY:
         try:
             from openai import OpenAI
             client = OpenAI(api_key=OPENAI_API_KEY)
 
-            # UPGRADED PROMPT
             prompt = f"""
             Role: You are a Cyber Threat Intelligence Analyst advising a F500 CISO.
             Task: Synthesize a "Bottom Line Up Front" (BLUF) briefing for the active threats listed below.
             
             Constraints:
             1. Start with a single "Strategic Impact" sentence.
-            2. List the top 3 specific "Actionable Steps" for Security Operations.
-            3. Tone: Professional, Urgent, Concise. No fluff.
+            2. List top 3 "Actionable Steps" for Security Operations.
+            3. Tone: Professional, Urgent, Concise.
             
             Threat Data:
             {threat_text}
             """
 
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3 # Lower temperature for more deterministic/professional output
-            )
+            with console.status("[bold yellow]🧠 Generating Executive Summary...[/bold yellow]", spinner="dots"):
+                response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3
+                )
             return response.choices[0].message.content
         except Exception as e:
             console.print(f"[yellow]⚠️ AI Generation failed ({e}). Using rule-based fallback.[/yellow]")
 
-    # Fallback remains the same...
+    # Fallback
     return (
         f"**EXECUTIVE THREAT BRIEFING**\n\n"
-        f"CISA has added {len(threats)} new confirmed exploits to the catalog this week. "
-        f"Immediate patching is required for **{threats[0]['vulnerabilityName']}** ({threats[0]['cveID']})."
+        f"The system has aggregated **{len(threats)} active threats** from CISA and AlienVault sources. "
+        f"Critical attention is required for **{threats[0].product}** regarding {threats[0].cve_id}."
     )
 
 def main():
-    # 1. Title
-    console.print(Panel.fit("[bold green]🤖 AI Threat Intelligence Agent[/bold green]\nTarget: CISA KEV Catalog", border_style="green"))
+    # 1. Header
+    console.print(Panel.fit("[bold green]🤖 AI Threat Intelligence Agent v2.0[/bold green]\nTarget: Multi-Source Aggregation", border_style="green"))
 
-    # 2. Fetch Data
-    all_threats = fetch_threats()
+    # 2. Aggregation (The New Professional Way)
+    aggregator = FeedAggregator(otx_key=OTX_API_KEY)
+    all_threats = aggregator.collect_all()
+
     if not all_threats:
+        console.print("[green]✅ No active threats reported by any feed provider.[/green]")
         return
 
-    # 3. Filter Data
-    recent_threats = filter_recent_threats(all_threats)
-    console.print(f"[dim]✓ Processed {len(all_threats)} records. Identified {len(recent_threats)} critical alerts.[/dim]\n")
+    # 3. Sort by Severity (Criticals First)
+    # Simple sort logic: CRITICAL > HIGH > MEDIUM
+    severity_rank = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+    all_threats.sort(key=lambda x: severity_rank.get(x.severity, 99))
 
-    # 4. Show Data Table
-    table = Table(title="🚨 Active Exploits (Last 7 Days)")
-    table.add_column("CVE ID", style="cyan", no_wrap=True)
+    console.print(f"\n[dim]✓ Processed {len(all_threats)} records from {len(aggregator.feeds)} sources.[/dim]\n")
+
+    # 4. Display Data Table
+    table = Table(title="🚨 Active Enterprise Threats")
+    table.add_column("Severity", style="bold red")
+    table.add_column("Source", style="cyan")
+    table.add_column("CVE / ID", style="white")
     table.add_column("Product", style="magenta")
-    table.add_column("Vulnerability Name", style="white")
-    table.add_column("Date Added", style="green")
+    table.add_column("Description", style="dim")
 
-    for t in recent_threats:
-        table.add_row(t['cveID'], t['product'], t['vulnerabilityName'], t['dateAdded'])
+    for t in all_threats[:10]: # Show top 10
+        table.add_row(t.severity, t.source_id, t.cve_id, t.product, t.description[:50]+"...")
 
     console.print(table)
     print("\n")
 
-    # 5. Generate "AI" Briefing
-    with console.status("[bold yellow]🧠 Generating Executive Summary...[/bold yellow]", spinner="dots"):
-        briefing = generate_ai_summary(recent_threats)
-
-    # 6. Output
+    # 5. Generate AI Briefing
+    briefing = generate_ai_briefing(all_threats)
     console.print(Panel(Markdown(briefing), title="📄 Executive Briefing (Generated)", border_style="blue"))
-
-    # 7. Integration Mock
-    console.print("\n[dim]🔌 Slack Webhook: [Sent][/dim]")
-    console.print("[dim]📧 Email Alert: [Sent][/dim]")
 
 if __name__ == "__main__":
     main()
