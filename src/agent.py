@@ -36,43 +36,44 @@ def filter_recent_threats(vulnerabilities, limit=5):
 
 def generate_ai_summary(threats):
     """
-    Uses OpenAI to write an executive summary.
-    FALLBACK: If no key is found, uses a template (Safe for Demos).
+    Uses OpenAI to generate a BLUF (Bottom Line Up Front) strategic summary.
     """
-
-    # Prepare the data for the prompt
-    threat_text = "\n".join([f"- {t['cveID']}: {t['vulnerabilityName']} (Added: {t['dateAdded']})" for t in threats])
+    # Prepare the data
+    threat_text = "\n".join([f"- {t['cveID']}: {t['vulnerabilityName']} (Product: {t['product']})" for t in threats])
 
     if OPENAI_API_KEY:
         try:
             from openai import OpenAI
             client = OpenAI(api_key=OPENAI_API_KEY)
 
+            # UPGRADED PROMPT
             prompt = f"""
-            You are a Cyber Threat Intelligence Analyst. 
-            Summarize the following critical vulnerabilities for a CISO. 
-            Focus on the business risk and immediate action required.
-            Keep it brief (under 100 words).
-
-            Threats:
+            Role: You are a Cyber Threat Intelligence Analyst advising a F500 CISO.
+            Task: Synthesize a "Bottom Line Up Front" (BLUF) briefing for the active threats listed below.
+            
+            Constraints:
+            1. Start with a single "Strategic Impact" sentence.
+            2. List the top 3 specific "Actionable Steps" for Security Operations.
+            3. Tone: Professional, Urgent, Concise. No fluff.
+            
+            Threat Data:
             {threat_text}
             """
 
             response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}]
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3 # Lower temperature for more deterministic/professional output
             )
             return response.choices[0].message.content
         except Exception as e:
             console.print(f"[yellow]⚠️ AI Generation failed ({e}). Using rule-based fallback.[/yellow]")
 
-    # --- FALLBACK (SIMULATION MODE) ---
+    # Fallback remains the same...
     return (
         f"**EXECUTIVE THREAT BRIEFING**\n\n"
         f"CISA has added {len(threats)} new confirmed exploits to the catalog this week. "
-        f"Immediate patching is required for **{threats[0]['vulnerabilityName']}** ({threats[0]['cveID']}), "
-        f"which is actively being exploited in the wild. "
-        f"Security Operations should verify coverage for {threats[0]['product']} assets immediately."
+        f"Immediate patching is required for **{threats[0]['vulnerabilityName']}** ({threats[0]['cveID']})."
     )
 
 def main():
