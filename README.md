@@ -1,39 +1,48 @@
 # 🛡️ AI Threat Intel & Vulnerability Monitor
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
-![Sources](https://img.shields.io/badge/Data-NVD%20%7C%20CISA%20%7C%20MSRC-blueviolet)
-![Alerts](https://img.shields.io/badge/Integration-SMTP%20Email-yellow)
+![Sources](https://img.shields.io/badge/Data-NVD%20%7C%20CISA%20%7C%20OTX-blueviolet)
+![Alerts](https://img.shields.io/badge/Output-Console%20%7C%20Markdown-yellow)
 ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
-**An automated Cyber Threat Intelligence (CTI) agent that aggregates vulnerabilities from multiple authoritative sources (CISA, NVD, Microsoft), filters out the noise, and delivers an Executive Briefing to security leadership.**
+**An automated Cyber Threat Intelligence (CTI) agent that aggregates vulnerabilities from multiple authoritative sources (CISA, NVD, AlienVault), filters out the noise, and delivers an AI-generated Executive Briefing to security leadership.**
 
-Most threat feeds are noisy firehoses. This agent acts as a **Level 1 Analyst**, applying a strict **Risk Decision Matrix** to determine if a vulnerability requires immediate attention (e.g., "Active Exploitation" or "CVSS > 7.0") before generating an alert.
+Most threat feeds are noisy firehoses. This agent acts as a **Level 1 Analyst**, applying a strict **Risk Decision Matrix** and using Generative AI (LLM) to synthesize a "Bottom Line Up Front" (BLUF) strategic summary.
 
 ## ✨ Key Features
 
-* **🌐 Multi-Source Aggregation:** Ingests data from **CISA KEV**, **NIST NVD**, and **Microsoft MSRC** (Mocked for Demo).
+* **🛡️ Modular Feed Architecture:** New `FeedAggregator` pattern allows for plug-and-play addition of threat sources (e.g., CISA, AlienVault, CrowdStrike) without refactoring core logic.
+* **🌐 Multi-Source Aggregation:** Ingests data from **CISA KEV** (Critical Enforcement) and **AlienVault OTX** (Emerging Threats).
 * **🧠 Risk Decision Matrix:** Automatically prioritizes threats based on:
     * **Criticality:** CVSS Score > 7.0
     * **Credibility:** Source Priority (e.g., CISA warnings override CVSS scores).
-* **📧 Executive Briefings:** Generates clean, HTML-formatted email reports suitable for CISOs and Security Directors.
-* **⏰ Flexible Scheduling:** Runs as a standalone daemon (daily at 08:00) or as a "run-once" task for CI/CD pipelines.
+* **🤖 AI Executive Briefings:** Uses OpenAI to generate clean, strategic summaries suitable for CISOs, focusing on business impact and actionable steps.
 
 ## 🛠️ Architecture
 
 ```mermaid
-graph LR
-    A[CISA KEV] --> D(Ingestion Engine)
-    B[NIST NVD] --> D
-    C[Microsoft MSRC] --> D
-    
-    D --> E{Risk Decision Matrix}
-    
-    E -->|CVSS < 7.0| F["🗑️ Drop (Noise)"]
-    E -->|CVSS > 7.0| G["🚨 Priority Queue"]
-    E -->|Source = CISA| G
-    
-    G --> H[Generate HTML Briefing]
-    H --> I[Send Email / Log]
+classDiagram
+    class ThreatFeed {
+        <<Interface>>
+        +fetch() List[ThreatIntel]
+    }
+    class CisaFeed {
+        +fetch()
+    }
+    class AlienVaultFeed {
+        +fetch()
+    }
+    class FeedAggregator {
+        +collect_all()
+    }
+    class Agent {
+        +generate_briefing()
+    }
+
+    ThreatFeed <|-- CisaFeed
+    ThreatFeed <|-- AlienVaultFeed
+    FeedAggregator o-- ThreatFeed : aggregates
+    Agent --> FeedAggregator : uses
 ```
 
 ## 🚀 Usage
@@ -48,30 +57,28 @@ pip install -r requirements.txt
 
 ### 2. Configuration
 
-The agent is driven by `config/settings.json`. You can define which sources are treated as "Critical" priority.
+The agent uses `.env` for secure credential management.
 
-```json
-{
-  "sources": [
-    { "name": "CISA Known Exploited Vulnerabilities", "priority": "CRITICAL" },
-    { "name": "NIST NVD", "priority": "HIGH" },
-    { "name": "Microsoft MSRC", "priority": "MEDIUM" }
-  ]
-}
-```
+1. Rename `.env.example` to `.env`:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Add your API keys (optional, agent runs in fallback mode without them):
+
+   ```ini
+   OPENAI_API_KEY=sk-your-key
+   OTX_API_KEY=your-otx-key
+   ```
 
 ### 3. Run the Monitor
 
-**Option A: Daemon Mode (Scheduler)**
-Runs continuously and executes the scan every day at 08:00 AM.
-```bash
-python src/daily_briefing.py
-```
+**Standard Mode (Console Output)**
+Aggregates feeds, filters threats, and generates the AI Briefing.
 
-**Option B: CI/CD Mode (One-Shot)**
-Runs the scan once and exits (perfect for GitHub Actions or Cron jobs).
 ```bash
-python src/daily_briefing.py --run-once
+python src/agent.py
 ```
 
 ## 📊 Sample Output
@@ -79,34 +86,24 @@ python src/daily_briefing.py --run-once
 ### CLI Console Logs
 
 ```text
-2026-01-07 08:00:01 - [INTEL_AGENT] - Starting Scheduler (Runs daily at 08:00)...
-2026-01-07 08:00:01 - [INTEL_AGENT] - --- Starting Threat Scan Cycle ---
-2026-01-07 08:00:01 - [INTEL_AGENT] - Starting ingestion from 3 sources...
-2026-01-07 08:00:01 - [INTEL_AGENT] - MATCH: CVE-2025-1001 flagged due to Source Priority (CRITICAL)
-2026-01-07 08:00:01 - [INTEL_AGENT] - MATCH: CVE-2025-2020 flagged due to CVSS Criticality (>7.0)
-2026-01-07 08:00:02 - [INTEL_AGENT] - 📧 EMAIL SENT to ciso@company.com with 2 items.
-2026-01-07 08:00:02 - [INTEL_AGENT] - --- Cycle Complete ---
+2026-02-04 08:00:01 - [INTEL_AGENT] - 🤖 AI Threat Intelligence Agent v2.0
+2026-02-04 08:00:01 - [INTEL_AGENT] - Target: Multi-Source Aggregation
+2026-02-04 08:00:02 - [INTEL_AGENT] - 📡 Polling CISA KEV Feed...
+2026-02-04 08:00:02 - [INTEL_AGENT] - 👽 Polling AlienVault OTX...
+2026-02-04 08:00:03 - [INTEL_AGENT] - ✓ Processed 15 records from 2 sources.
 ```
 
-### Email Alert (HTML)
+### AI Executive Briefing (Generated)
 
-> **Subject:** 🚨 Threat Intel Briefing: 2 Critical Items
+> **EXECUTIVE THREAT BRIEFING**
 >
-> **Daily Executive Threat Briefing**
+> **Strategic Impact:**
+> Active exploitation of **Citrix NetScaler (CVE-2025-1001)** poses an immediate risk to perimeter integrity, potentially allowing unauthenticated remote access to internal networks.
 >
-> The following items matched our **High Risk** criteria (CVSS > 7.0 or Active Exploitation):
->
-> ---
->
-> **CVE-2025-1001 (CVSS 9.8)**
-> * **Source:** CISA Known Exploited Vulnerabilities
-> * **Impact:** Active exploitation of Citrix NetScaler zero-day.
-> * **Status:** Active Exploitation
->
-> **CVE-2025-2020 (CVSS 8.8)**
-> * **Source:** Microsoft MSRC
-> * **Impact:** Remote Code Execution in Exchange Server OWA.
-> * **Status:** Patch Available
+> **Actionable Steps:**
+> 1. **Block:** Immediately enforce geoblocking and rate-limiting on NetScaler VIPs.
+> 2. **Patch:** Apply emergency hotfix v14.1 within the next 4 hours.
+> 3. **Hunt:** Review gateway logs for unauthorized sessions originating from unknown IPs in the last 24h.
 
 ## 📜 License
 
