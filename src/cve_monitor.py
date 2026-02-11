@@ -1,14 +1,17 @@
 import requests
+import logging
 from datetime import datetime, timedelta
+from typing import List, Dict, Any
 
-# NVD API Configuration
+logger = logging.getLogger(__name__)
+
 NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
 class CVEMonitor:
-    def __init__(self, tech_stack):
+    def __init__(self, tech_stack: List[str]):
         self.tech_stack = tech_stack
 
-    def fetch_latest_cves(self):
+    def fetch_latest_cves(self) -> List[Dict[str, Any]]:
         """Fetches CVEs published in the last 24 hours."""
         now = datetime.now()
         yesterday = now - timedelta(days=1)
@@ -20,27 +23,29 @@ class CVEMonitor:
         }
 
         try:
-            print(f"📡 Querying NVD for CVEs (Last 24h)...")
-            response = requests.get(NVD_API_URL, params=params, timeout=10)
+            logger.info("Querying NVD for CVEs (Last 24h)...")
+            response = requests.get(NVD_API_URL, params=params, timeout=15)
             
             if response.status_code == 200:
                 data = response.json()
                 vulnerabilities = data.get("vulnerabilities", [])
-                print(f"✅ Found {len(vulnerabilities)} new CVEs.")
+                logger.info(f"Found {len(vulnerabilities)} new CVEs.")
                 return vulnerabilities
             else:
-                print(f"❌ NVD API Error: {response.status_code}")
+                logger.error(f"NVD API Error: {response.status_code}")
                 return []
+        except requests.Timeout:
+            logger.error("NVD API Connection Timed Out.")
+            return []
         except Exception as e:
-            print(f"❌ Connection Error: {e}")
+            logger.error(f"NVD Connection Error: {e}")
             return []
 
-    def filter_relevant_cves(self, vulnerabilities):
+    def filter_relevant_cves(self, vulnerabilities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Simple keyword matching against tech stack."""
         matches = []
         for item in vulnerabilities:
-            cve = item['cve']
-            # Safely get description
+            cve = item.get('cve', {})
             descriptions = cve.get('descriptions', [])
             desc = descriptions[0]['value'] if descriptions else "No description available"
             cve_id = cve.get('id', 'Unknown ID')
