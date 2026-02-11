@@ -1,15 +1,13 @@
 import requests
+import logging
 from abc import ABC, abstractmethod
 from typing import List, Optional
-from dataclasses import dataclass, asdict
-from rich.console import Console
+from dataclasses import dataclass
 from datetime import datetime
 
-console = Console()
+logger = logging.getLogger(__name__)
 
 # --- 1. The Enterprise Data Model ---
-# We use @dataclass to enforce a strict schema for all threats, 
-# no matter which messy API they came from.
 @dataclass
 class ThreatIntel:
     source_id: str
@@ -21,7 +19,7 @@ class ThreatIntel:
     url: str
     date_added: str
 
-# --- 2. The Abstract Interface (The Contract) ---
+# --- 2. The Abstract Interface ---
 class ThreatFeed(ABC):
     @abstractmethod
     def fetch(self) -> List[ThreatIntel]:
@@ -33,46 +31,48 @@ class CisaKevFeed(ThreatFeed):
     URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 
     def fetch(self) -> List[ThreatIntel]:
-        console.print(f"[cyan]📡 Polling CISA KEV Feed...[/cyan]")
+        logger.info("Polling CISA KEV Feed...")
         try:
             resp = requests.get(self.URL, timeout=10)
             resp.raise_for_status()
             data = resp.json()
             
             results = []
-            # We treat CISA KEV as the "Gold Standard" for Critical
-            for item in data.get('vulnerabilities', [])[:15]: # Limit for performance
+            # CISA KEV is the "Gold Standard" for Critical Action
+            for item in data.get('vulnerabilities', [])[:15]: 
                 results.append(ThreatIntel(
                     source_id="CISA_KEV",
-                    cve_id=item.get('cveID'),
-                    title=item.get('vulnerabilityName'),
-                    product=item.get('product'),
-                    description=item.get('shortDescription'),
+                    cve_id=item.get('cveID', 'Unknown'),
+                    title=item.get('vulnerabilityName', 'Unknown'),
+                    product=item.get('product', 'Unknown'),
+                    description=item.get('shortDescription', ''),
                     severity="CRITICAL", 
                     url=f"https://nvd.nist.gov/vuln/detail/{item.get('cveID')}",
-                    date_added=item.get('dateAdded')
+                    date_added=item.get('dateAdded', '')
                 ))
             return results
+        except requests.RequestException as e:
+            logger.error(f"CISA Feed Network Error: {e}")
+            return []
         except Exception as e:
-            console.print(f"[bold red]❌ CISA Feed Error: {e}[/bold red]")
+            logger.error(f"CISA Feed Parsing Error: {e}")
             return []
 
-# --- 4. Implementation: AlienVault OTX (The New Skeleton) ---
+# --- 4. Implementation: AlienVault OTX ---
 class AlienVaultOtxFeed(ThreatFeed):
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key
         self.base_url = "https://otx.alienvault.com/api/v1/pulses/subscribed"
 
     def fetch(self) -> List[ThreatIntel]:
-        console.print(f"[cyan]👽 Polling AlienVault OTX (Skeleton)...[/cyan]")
+        logger.info("Polling AlienVault OTX...")
         
-        # Real logic would go here. For now, we simulate to prove the architecture.
+        # Simulation Mode if no key provided
         if not self.api_key:
+            logger.warning("No OTX API Key provided. Running in Simulation Mode.")
             return self._simulate_data()
 
-        # TODO: Implement actual OTX API call
-        # headers = {'X-OTX-API-KEY': self.api_key}
-        # resp = requests.get(self.base_url, headers=headers)
+        # TODO: Implement actual OTX API call in next sprint
         return []
 
     def _simulate_data(self) -> List[ThreatIntel]:
@@ -102,10 +102,10 @@ class FeedAggregator:
         """Iterates through all registered feeds and aggregates findings."""
         all_threats = []
         for feed in self.feeds:
-            # We catch errors per feed so one bad API doesn't crash the whole agent
             try:
                 threats = feed.fetch()
                 all_threats.extend(threats)
             except Exception as e:
-                console.print(f"[red]⚠️ Failed to fetch from {feed.__class__.__name__}: {e}[/red]")
+                # Isolate failures so one bad feed doesn't crash the agent
+                logger.error(f"Failed to fetch from {feed.__class__.__name__}: {e}")
         return all_threats
