@@ -1,20 +1,26 @@
 import os
 import requests
-from dotenv import load_dotenv
+import logging
+from typing import Union, Dict, Any
 
-load_dotenv()
-SLACK_URL = os.getenv("SLACK_WEBHOOK_URL")
+# We use lazy import inside function to avoid circular dependency if needed, 
+# but for type hinting we can use 'Any' or import class if structure allows.
 
-def send_slack_alert(threat):
+logger = logging.getLogger(__name__)
+
+def send_slack_alert(threat: Any) -> bool:
     """
     Dispatch a formatted Slack alert.
-    Supports both v2.0 ThreatIntel objects and legacy dictionaries.
+    Returns True if sent successfully, False otherwise.
     """
-    if not SLACK_URL or "hooks.slack.com" not in SLACK_URL:
-        # Silently fail if no webhook is configured (avoids crashing the agent)
-        return
+    slack_url = os.getenv("SLACK_WEBHOOK_URL")
+    
+    if not slack_url or "hooks.slack.com" not in slack_url:
+        # Debug level so logs aren't spammed if not configured
+        logger.debug("Slack Webhook not configured. Skipping alert.")
+        return False
 
-    # 1. Normalize Data (Handle Class vs Dict)
+    # 1. Normalize Data (Handle Class vs Legacy Dict)
     if hasattr(threat, 'cve_id'): 
         # It's a v2.0 ThreatIntel Object
         cve_id = threat.cve_id
@@ -47,7 +53,7 @@ def send_slack_alert(threat):
                 "blocks": [
                     {
                         "type": "header",
-                        "text": {"type": "plain_text", "text": f"🚨 {severity}: {cve_id}", "emoji": True}
+                        "text": {"type": "plain_text", "text": f"{severity}: {cve_id}", "emoji": False}
                     },
                     {
                         "type": "section",
@@ -72,7 +78,8 @@ def send_slack_alert(threat):
     }
 
     try:
-        requests.post(SLACK_URL, json=payload, timeout=5)
-        # We don't print here to keep the CLI clean; let the agent handle logging
-    except Exception as e:
-        print(f"❌ Slack Delivery Failed: {e}")
+        requests.post(slack_url, json=payload, timeout=5)
+        return True
+    except requests.RequestException as e:
+        logger.error(f"Slack Delivery Failed: {e}")
+        return False
