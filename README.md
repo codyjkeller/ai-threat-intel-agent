@@ -1,4 +1,4 @@
-# 🛡️ AI Threat Intel & Vulnerability Monitor
+# AI Threat Intel & Vulnerability Monitor
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![Sources](https://img.shields.io/badge/Data-NVD%20%7C%20CISA%20%7C%20OTX-blueviolet)
@@ -9,16 +9,16 @@
 
 Most threat feeds are noisy firehoses. This agent acts as a **Level 1 Analyst**, applying a strict **Risk Decision Matrix** and using Generative AI (LLM) to synthesize a "Bottom Line Up Front" (BLUF) strategic summary.
 
-## ✨ Key Features
+## Key Features
 
-* **🛡️ Modular Feed Architecture:** New `FeedAggregator` pattern allows for plug-and-play addition of threat sources (e.g., CISA, AlienVault, CrowdStrike) without refactoring core logic.
-* **🌐 Multi-Source Aggregation:** Ingests data from **CISA KEV** (Critical Enforcement) and **AlienVault OTX** (Emerging Threats).
-* **🧠 Risk Decision Matrix:** Automatically prioritizes threats based on:
+* **Modular Feed Architecture:** New `FeedAggregator` pattern allows for plug-and-play addition of threat sources (e.g., CISA, AlienVault, CrowdStrike) without refactoring core logic.
+* **Multi-Source Aggregation:** Ingests data from **CISA KEV** (Critical Enforcement) and **AlienVault OTX** (Emerging Threats).
+* **Risk Decision Matrix:** Automatically prioritizes threats based on:
     * **Criticality:** CVSS Score > 7.0
     * **Credibility:** Source Priority (e.g., CISA warnings override CVSS scores).
-* **🤖 AI Executive Briefings:** Uses OpenAI to generate clean, strategic summaries suitable for CISOs, focusing on business impact and actionable steps.
+* **AI Executive Briefings:** Uses OpenAI to generate clean, strategic summaries suitable for CISOs, focusing on business impact and actionable steps.
 
-## 🛠️ Architecture
+## Architecture
 
 ```mermaid
 classDiagram
@@ -45,7 +45,7 @@ classDiagram
     Agent --> FeedAggregator : uses
 ```
 
-## 🚀 Usage
+## Usage
 
 ### 1. Installation
 
@@ -81,16 +81,16 @@ Aggregates feeds, filters threats, and generates the AI Briefing.
 python src/agent.py
 ```
 
-## 📊 Sample Output
+## Sample Output
 
 ### CLI Console Logs
 
 ```text
-2026-02-04 08:00:01 - [INTEL_AGENT] - 🤖 AI Threat Intelligence Agent v2.0
+2026-02-04 08:00:01 - [INTEL_AGENT] - AI Threat Intelligence Agent v2.0
 2026-02-04 08:00:01 - [INTEL_AGENT] - Target: Multi-Source Aggregation
-2026-02-04 08:00:02 - [INTEL_AGENT] - 📡 Polling CISA KEV Feed...
-2026-02-04 08:00:02 - [INTEL_AGENT] - 👽 Polling AlienVault OTX...
-2026-02-04 08:00:03 - [INTEL_AGENT] - ✓ Processed 15 records from 2 sources.
+2026-02-04 08:00:02 - [INTEL_AGENT] - Polling CISA KEV Feed...
+2026-02-04 08:00:02 - [INTEL_AGENT] - Polling AlienVault OTX...
+2026-02-04 08:00:03 - [INTEL_AGENT] - Processed 15 records from 2 sources.
 ```
 
 ### AI Executive Briefing (Generated)
@@ -105,6 +105,6 @@ python src/agent.py
 > 2. **Patch:** Apply emergency hotfix v14.1 within the next 4 hours.
 > 3. **Hunt:** Review gateway logs for unauthorized sessions originating from unknown IPs in the last 24h.
 
-## 📜 License
+## License
 
 MIT
