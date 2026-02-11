@@ -1,21 +1,27 @@
 import os
+import logging
+import sys
+from typing import List
 from dotenv import load_dotenv
-from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
-from rich.markdown import Markdown
 
-# Import our modules
+# Local Modules
 from feeds import FeedAggregator, ThreatIntel
-from notifier import send_slack_alert  # <--- Slack Integration
+from notifier import send_slack_alert
+
+# Configure Enterprise Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - [THREAT_INTEL] - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger(__name__)
 
 # Load Environment Variables
 load_dotenv()
-console = Console()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OTX_API_KEY = os.getenv("OTX_API_KEY")
 
-def generate_ai_briefing(threats: list[ThreatIntel]):
+def generate_ai_briefing(threats: List[ThreatIntel]) -> str:
     """
     Generates a BLUF (Bottom Line Up Front) executive summary using OpenAI.
     """
@@ -40,15 +46,15 @@ def generate_ai_briefing(threats: list[ThreatIntel]):
             {threat_text}
             """
 
-            with console.status("[bold yellow]Generating Executive Summary...[/bold yellow]", spinner="dots"):
-                response = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.3
-                )
+            logger.info("Generating Executive Summary via OpenAI...")
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3
+            )
             return response.choices[0].message.content
         except Exception as e:
-            console.print(f"[yellow]AI Generation failed ({e}). Using rule-based fallback.[/yellow]")
+            logger.error(f"AI Generation failed: {e}. Reverting to fallback.")
 
     # Fallback
     return (
@@ -58,53 +64,50 @@ def generate_ai_briefing(threats: list[ThreatIntel]):
     )
 
 def main():
-    # 1. Header
-    console.print(Panel.fit("[bold green]AI Threat Intelligence Agent v2.0[/bold green]\nTarget: Multi-Source Aggregation", border_style="green"))
+    logger.info("Starting AI Threat Intelligence Agent v2.0")
+    logger.info("Target: Multi-Source Aggregation")
 
-    # 2. Aggregation
+    # 1. Aggregation
     aggregator = FeedAggregator(otx_key=OTX_API_KEY)
     all_threats = aggregator.collect_all()
 
     if not all_threats:
-        console.print("[green]No active threats reported by any feed provider.[/green]")
+        logger.info("No active threats reported by any feed provider.")
         return
 
-    # 3. Sort by Severity (Criticals First)
+    # 2. Sort by Severity (Criticals First)
     severity_rank = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
     all_threats.sort(key=lambda x: severity_rank.get(x.severity, 99))
 
-    console.print(f"\n[dim]Processed {len(all_threats)} records from {len(aggregator.feeds)} sources.[/dim]\n")
+    logger.info(f"Processed {len(all_threats)} records from {len(aggregator.feeds)} sources.")
 
-    # 4. Display Data Table & Send Alerts
-    table = Table(title="Active Enterprise Threats")
-    table.add_column("Severity", style="bold red")
-    table.add_column("Source", style="cyan")
-    table.add_column("CVE / ID", style="white")
-    table.add_column("Product", style="magenta")
-    
-    # Track alerts sent
+    # 3. Process Threats & Alert
     alerts_sent = 0
+    print("\n" + "="*60)
+    print(f"{'SEVERITY':<12} | {'SOURCE':<15} | {'CVE ID':<18} | {'PRODUCT'}")
+    print("-" * 60)
 
-    for t in all_threats[:10]: # Show top 10
-        table.add_row(t.severity, t.source_id, t.cve_id, t.product)
+    for t in all_threats[:15]: # Process top 15
+        # Clean Output Table
+        print(f"{t.severity:<12} | {t.source_id[:15]:<15} | {t.cve_id:<18} | {t.product}")
         
-        # --- SLACK INTEGRATION ---
-        # Only alert on CRITICAL or HIGH threats
+        # Dispatch Alert for Critical/High
         if t.severity in ["CRITICAL", "HIGH"]:
-            send_slack_alert(t)
-            alerts_sent += 1
-        # -------------------------
+            if send_slack_alert(t):
+                alerts_sent += 1
 
-    console.print(table)
-    
+    print("="*60 + "\n")
+
     if alerts_sent > 0:
-        console.print(f"\n[bold yellow]Dispatched {alerts_sent} Slack alerts for High/Critical threats.[/bold yellow]\n")
+        logger.info(f"Dispatched {alerts_sent} Slack alerts for High/Critical threats.")
     else:
-        console.print(f"\n[dim]No alerts sent (No Critical/High threats found or Webhook missing).[/dim]\n")
+        logger.info("No alerts sent (No High/Critical threats or Slack not configured).")
 
-    # 5. Generate AI Briefing
+    # 4. Generate AI Briefing
     briefing = generate_ai_briefing(all_threats)
-    console.print(Panel(Markdown(briefing), title="Executive Briefing (Generated)", border_style="blue"))
+    print("\n--- EXECUTIVE BRIEFING (GENERATED) ---\n")
+    print(briefing)
+    print("\n--------------------------------------\n")
 
 if __name__ == "__main__":
     main()
