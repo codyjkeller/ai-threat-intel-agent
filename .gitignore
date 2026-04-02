@@ -1,15 +1,12 @@
-# Python
 __pycache__/
-*.py[cod]
-*$py.class
-venv/
+*.py[codz]
 .env
-
-# Data artifacts (Optional: Keep this if you want to commit the mock feed, 
-# but usually we ignore generated data)
-# data/threat_feed.json 
-
-# IDE
-.vscode/
-.idea/
+.venv/
+venv/
+data/
+*.db
+*.log
 .DS_Store
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/

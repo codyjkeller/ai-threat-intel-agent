@@ -1,0 +1,26 @@
+version: "3.8"
+
+services:
+  threat-intel:
+    build: .
+    container_name: threat-intel-portal
+    ports:
+      - "8400:8000"
+    volumes:
+      - threat-intel-data:/app/data
+    environment:
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - INGEST_INTERVAL_HOURS=${INGEST_INTERVAL_HOURS:-4}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CORS_ORIGINS=${CORS_ORIGINS:-https://intel.echobase.tech,http://localhost:3000}
+      - TOKEN_EXPIRY_HOURS=${TOKEN_EXPIRY_HOURS:-72}
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+
+volumes:
+  threat-intel-data:
+    driver: local

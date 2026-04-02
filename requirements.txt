@@ -1,14 +1,8 @@
-# Core Logic (Strict Versioning)
-openai>=1.10.0       # AI summarization (Direct API)
-requests>=2.31.0     # Network calls
-python-dotenv>=1.0.0 # Config management
-feedparser>=6.0.10   # RSS ingestion
-pandas>=2.0.0        # Data manipulation
-schedule>=1.2.0      # Job scheduling
-
-# CLI Output
-rich>=13.0.0         # Terminal formatting (Replaces colorama)
-
-# Dashboard / UI (Keep these if using demo_app.py)
-streamlit>=1.30.0    # Web Interface
-plotly>=5.18.0       # Charts
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+sqlalchemy>=2.0.0
+httpx>=0.28.0
+bcrypt>=4.2.0
+PyJWT>=2.9.0
+pydantic[email]>=2.10.0
+python-dotenv>=1.0.0

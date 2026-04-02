@@ -1,110 +1,134 @@
-# AI Threat Intel & Vulnerability Monitor
+# Threat Intel Portal
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
-![Sources](https://img.shields.io/badge/Data-NVD%20%7C%20CISA%20%7C%20OTX-blueviolet)
-![Alerts](https://img.shields.io/badge/Output-Console%20%7C%20Markdown-yellow)
+![Python](https://img.shields.io/badge/Python-3.11+-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-green)
 ![License](https://img.shields.io/badge/License-MIT-lightgrey)
+![Docker](https://img.shields.io/badge/Docker-Ready-blue)
 
-**An automated Cyber Threat Intelligence (CTI) agent that aggregates vulnerabilities from multiple authoritative sources (CISA, NVD, AlienVault), filters out the noise, and delivers an AI-generated Executive Briefing to security leadership.**
+**A self-hosted threat intelligence digest service.** Subscribe to security topics, product-specific advisories, and privacy legislation — receive personalized briefings at your chosen frequency.
 
-Most threat feeds are noisy firehoses. This agent acts as a **Level 1 Analyst**, applying a strict **Risk Decision Matrix** and using Generative AI (LLM) to synthesize a "Bottom Line Up Front" (BLUF) strategic summary.
+> **Disclaimer:** This service aggregates publicly available threat intelligence for informational purposes only. Subscribing to product-specific alerts does not indicate or acknowledge use of those products in your environment. This is not a substitute for a formal threat intelligence program. Use at your own risk. See [full disclaimer](#disclaimer) below.
 
-## Key Features
+## What It Does
 
-* **Modular Feed Architecture:** New `FeedAggregator` pattern allows for plug-and-play addition of threat sources (e.g., CISA, AlienVault, CrowdStrike) without refactoring core logic.
-* **Multi-Source Aggregation:** Ingests data from **CISA KEV** (Critical Enforcement) and **AlienVault OTX** (Emerging Threats).
-* **Risk Decision Matrix:** Automatically prioritizes threats based on:
-    * **Criticality:** CVSS Score > 7.0
-    * **Credibility:** Source Priority (e.g., CISA warnings override CVSS scores).
-* **AI Executive Briefings:** Uses OpenAI to generate clean, strategic summaries suitable for CISOs, focusing on business impact and actionable steps.
+Think TLDR newsletter, but for cybersecurity and privacy — self-hosted, customizable, and product-aware.
 
-## Architecture
+Users sign up, pick the topics and products they care about, and receive a curated digest via the API (email integration planned). Sources are all public: CISA KEV, NVD/CVE, vendor security advisories, and security/privacy news RSS feeds.
 
-```mermaid
-classDiagram
-    class ThreatFeed {
-        <<Interface>>
-        +fetch() List[ThreatIntel]
-    }
-    class CisaFeed {
-        +fetch()
-    }
-    class AlienVaultFeed {
-        +fetch()
-    }
-    class FeedAggregator {
-        +collect_all()
-    }
-    class Agent {
-        +generate_briefing()
-    }
+**Topics** cover broad categories: ransomware, zero-days, cloud security, nation-state threats, US privacy legislation, AI regulation, and more.
 
-    ThreatFeed <|-- CisaFeed
-    ThreatFeed <|-- AlienVaultFeed
-    FeedAggregator o-- ThreatFeed : aggregates
-    Agent --> FeedAggregator : uses
-```
+**Products** let you subscribe to alerts for specific tools: AWS, Azure, Okta, CrowdStrike, Palo Alto, Microsoft 365, GitHub, and others. When a CVE or advisory drops for a product you track, it shows up in your digest.
 
-## Usage
+**Frequency** is user-controlled: daily, weekly, or monthly.
 
-### 1. Installation
+## Features
+
+- **Feed Ingestion:** CISA KEV catalog, NVD CVE API (CVSS 7.0+), RSS feeds (Krebs, Bleeping Computer, The Record, IAPP, vendor advisories)
+- **User Accounts:** Signup, login, JWT auth
+- **Subscription System:** Subscribe to topics (ransomware, privacy law, etc.) and/or specific products (AWS, Okta, etc.)
+- **Digest Builder:** Personalized digests grouped by severity (Critical, High, News)
+- **Background Scheduler:** Automatic feed ingestion every 4 hours (configurable), ensuring at least 2 refreshes per workday
+- **Docker Ready:** Single-container deployment, Portainer-compatible
+- **Privacy & Compliance News:** US state privacy legislation, GDPR, AI regulation tracking
+
+## Quick Start
+
+### Local Development
 
 ```bash
-git clone [https://github.com/codyjkeller/ai-threat-intel-agent.git](https://github.com/codyjkeller/ai-threat-intel-agent.git)
+git clone https://github.com/codyjkeller/ai-threat-intel-agent.git
 cd ai-threat-intel-agent
 pip install -r requirements.txt
+cp .env.example .env  # edit JWT_SECRET
+uvicorn src.main:app --reload
 ```
 
-### 2. Configuration
+API docs at `http://localhost:8000/docs`
 
-The agent uses `.env` for secure credential management.
-
-1. Rename `.env.example` to `.env`:
-
-   ```bash
-   cp .env.example .env
-   ```
-
-2. Add your API keys (optional, agent runs in fallback mode without them):
-
-   ```ini
-   OPENAI_API_KEY=sk-your-key
-   OTX_API_KEY=your-otx-key
-   ```
-
-### 3. Run the Monitor
-
-**Standard Mode (Console Output)**
-Aggregates feeds, filters threats, and generates the AI Briefing.
+### Docker (Production / Home Lab)
 
 ```bash
-python src/agent.py
+git clone https://github.com/codyjkeller/ai-threat-intel-agent.git
+cd ai-threat-intel-agent
+cp .env.example .env  # edit JWT_SECRET
+docker compose up -d
 ```
 
-## Sample Output
+Runs on port `8400`. Point your Cloudflare Tunnel or reverse proxy to `http://<host-ip>:8400`.
 
-### CLI Console Logs
+### Portainer
+
+Create a new stack in Portainer, paste the `docker-compose.yml` content, set environment variables, and deploy.
+
+## API Reference
+
+All endpoints under `/api/v1`. Auth endpoints are public; everything else requires `Authorization: Bearer <token>`.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/auth/signup` | Create account |
+| POST | `/api/v1/auth/login` | Get JWT token |
+| GET | `/api/v1/me` | Current user profile |
+| GET | `/api/v1/topics` | List available topics |
+| GET | `/api/v1/products` | List available products |
+| PUT | `/api/v1/subscriptions` | Update subscriptions + frequency |
+| GET | `/api/v1/digest/preview` | Preview next digest |
+| GET | `/api/v1/feed` | Browse all feed items (filterable) |
+| GET | `/health` | Health check |
+| GET | `/disclaimer` | Legal disclaimer |
+
+## Project Structure
 
 ```text
-2026-02-04 08:00:01 - [INTEL_AGENT] - AI Threat Intelligence Agent v2.0
-2026-02-04 08:00:01 - [INTEL_AGENT] - Target: Multi-Source Aggregation
-2026-02-04 08:00:02 - [INTEL_AGENT] - Polling CISA KEV Feed...
-2026-02-04 08:00:02 - [INTEL_AGENT] - Polling AlienVault OTX...
-2026-02-04 08:00:03 - [INTEL_AGENT] - Processed 15 records from 2 sources.
+ai-threat-intel-agent/
+├── src/
+│   ├── main.py              # FastAPI app + scheduler
+│   ├── api/routes.py        # API endpoints
+│   ├── models/
+│   │   ├── database.py      # SQLAlchemy models
+│   │   └── seed.py          # Default topics, products, feed sources
+│   ├── feeds/ingest.py      # CISA KEV, NVD, RSS ingestion
+│   └── services/
+│       ├── auth.py           # Password hashing, JWT
+│       └── digest.py         # Digest builder
+├── docker-compose.yml
+├── Dockerfile
+├── requirements.txt
+├── .env.example
+└── README.md
 ```
 
-### AI Executive Briefing (Generated)
+## Configuration
 
-> **EXECUTIVE THREAT BRIEFING**
->
-> **Strategic Impact:**
-> Active exploitation of **Citrix NetScaler (CVE-2025-1001)** poses an immediate risk to perimeter integrity, potentially allowing unauthenticated remote access to internal networks.
->
-> **Actionable Steps:**
-> 1. **Block:** Immediately enforce geoblocking and rate-limiting on NetScaler VIPs.
-> 2. **Patch:** Apply emergency hotfix v14.1 within the next 4 hours.
-> 3. **Hunt:** Review gateway logs for unauthorized sessions originating from unknown IPs in the last 24h.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JWT_SECRET` | (required) | JWT signing key |
+| `INGEST_INTERVAL_HOURS` | `4` | Hours between feed ingestion runs |
+| `TOKEN_EXPIRY_HOURS` | `72` | JWT token lifetime |
+| `CORS_ORIGINS` | `http://localhost:3000` | Allowed CORS origins |
+| `LOG_LEVEL` | `INFO` | Logging verbosity |
+
+## Roadmap
+
+- [ ] Email digest delivery (SMTP)
+- [ ] Web UI (React or simple HTML dashboard)
+- [ ] AI-generated executive summaries per digest
+- [ ] Webhook notifications (Slack, Discord, ntfy)
+- [ ] Source reputation/trust scoring per feed
+- [ ] User-submitted custom RSS feeds
+- [ ] STIX/TAXII feed support
+
+## Disclaimer
+
+This service aggregates **publicly available** threat intelligence for **informational purposes only**.
+
+- Subscribing to product-specific alerts **does not indicate or acknowledge** use of those products in your environment.
+- This service is **not a substitute** for a formal threat intelligence program, incident response capability, or professional security advisory.
+- The author makes no guarantees regarding the accuracy, completeness, or timeliness of the information provided.
+- **Use at your own risk.** The author assumes no liability for decisions made based on this service's output.
+
+See the [MIT License](LICENSE) for full terms.
 
 ## License
 
-MIT
+[MIT](LICENSE)
